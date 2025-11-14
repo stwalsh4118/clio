@@ -17,3 +17,4 @@ This document lists all tasks associated with PBI 1.
 | 1-7 | [Create default configuration file on first run](./1-7.md) | Proposed | Auto-create ~/.clio/config.yaml with defaults when missing |
 | 1-8 | [E2E CoS Test](./1-8.md) | Proposed | End-to-end testing to verify all 12 acceptance criteria from the PBI |
 
+
