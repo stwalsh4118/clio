@@ -4,7 +4,7 @@
 
 ## Overview
 
-Implement the `insightd analyze` command that creates a structured workspace containing captured conversations, commits, and a prompt template for cursor-agent. This workspace enables cursor-agent to analyze development sessions and generate blog content.
+Implement the `clio analyze` command that creates a structured workspace containing captured conversations, commits, and a prompt template for cursor-agent. This workspace enables cursor-agent to analyze development sessions and generate blog content.
 
 ## Problem Statement
 
@@ -25,14 +25,14 @@ To enable cursor-agent to analyze captured development sessions and generate blo
 ### Components
 
 **1. Analyze Command**
-- `insightd analyze` - Create analysis workspace
+- `clio analyze` - Create analysis workspace
 - Options: `--hours N`, `--days N`, `--session <id>`, `--project <name>`
 - Query SQLite for relevant sessions
 - Copy markdown files to workspace
 - Generate prompt template
 
 **2. Workspace Structure**
-- Create workspace directory: `~/.insightd/analysis/YYYY-MM-DD-<project>/`
+- Create workspace directory: `~/.clio/analysis/YYYY-MM-DD-<project>/`
 - Copy relevant conversation markdown files to `sessions/` subdirectory
 - Copy relevant commit markdown files to `sessions/` subdirectory
 - Create `README.md` with workspace usage instructions
@@ -52,7 +52,7 @@ To enable cursor-agent to analyze captured development sessions and generate blo
 ### Workspace Structure
 
 ```
-~/.insightd/analysis/2025-01-27-stream-tv/
+~/.clio/analysis/2025-01-27-stream-tv/
 ├── README.md                    # How to use this workspace
 ├── prompt.md                    # Suggested cursor-agent prompt
 ├── sessions/
@@ -78,13 +78,13 @@ The `prompt.md` file should include:
 
 ```bash
 # Analyze last 8 hours
-insightd analyze --hours 8
+clio analyze --hours 8
 
 # Analyze specific session
-insightd analyze --session abc123
+clio analyze --session abc123
 
 # Analyze last week of specific project
-insightd analyze --project stream-tv --days 7
+clio analyze --project stream-tv --days 7
 ```
 
 ## UX/UI Considerations
@@ -105,9 +105,9 @@ insightd analyze --project stream-tv --days 7
 
 ### Must Have
 
-1. `insightd analyze --hours N` creates workspace with sessions from last N hours
-2. `insightd analyze --session <id>` creates workspace for specific session
-3. `insightd analyze --project <name> --days N` creates workspace filtered by project and time
+1. `clio analyze --hours N` creates workspace with sessions from last N hours
+2. `clio analyze --session <id>` creates workspace for specific session
+3. `clio analyze --project <name> --days N` creates workspace filtered by project and time
 4. Workspace includes all relevant conversation markdown files
 5. Workspace includes all relevant commit markdown files
 6. Workspace includes `README.md` with usage instructions

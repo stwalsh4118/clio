@@ -44,7 +44,7 @@ Git commits represent the actual code changes that result from development sessi
 
 **5. Markdown Export**
 - Export commits to markdown files
-- Organize by date: `~/.insightd/sessions/YYYY-MM-DD/<project>/commits.md`
+- Organize by date: `~/.clio/sessions/YYYY-MM-DD/<project>/commits.md`
 - Include commit metadata and diffs in readable format
 
 ### Commit Markdown Format
@@ -107,7 +107,7 @@ Correlate with Active Sessions
     ↓
 Markdown Exporter Writes Files
     ↓
-~/.insightd/sessions/YYYY-MM-DD/<project>/commits.md
+~/.clio/sessions/YYYY-MM-DD/<project>/commits.md
 ```
 
 ## UX/UI Considerations

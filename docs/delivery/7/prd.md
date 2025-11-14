@@ -45,7 +45,7 @@ To enable cursor-agent to create blog posts that reference and build on previous
 ### Workspace Structure (Updated)
 
 ```
-~/.insightd/analysis/2025-01-27-stream-tv/
+~/.clio/analysis/2025-01-27-stream-tv/
 ├── README.md                    # How to use this workspace
 ├── prompt.md                    # Suggested cursor-agent prompt
 ├── sessions/
@@ -108,10 +108,10 @@ The `prompt.md` should be updated to include:
 
 ### Must Have
 
-1. `insightd config --set-blog-repo <path>` successfully configures blog repository path
+1. `clio config --set-blog-repo <path>` successfully configures blog repository path
 2. System validates that blog repository path exists and is a git repository
 3. Analysis workspace includes blog repository in `blog-repo/` subdirectory
-4. Blog repository is cloned (or symlinked) into workspace when `insightd analyze` runs
+4. Blog repository is cloned (or symlinked) into workspace when `clio analyze` runs
 5. Prompt template references blog repository and includes instructions for finding connections
 6. Cursor-agent can successfully read blog posts from workspace
 7. System handles missing or invalid blog repository configuration gracefully

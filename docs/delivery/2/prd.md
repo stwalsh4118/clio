@@ -45,8 +45,8 @@ Cursor AI conversations contain valuable insights about problem-solving approach
 
 **5. Markdown Export**
 - Convert conversations to structured markdown format
-- Organize by date: `~/.insightd/sessions/YYYY-MM-DD/`
-- Organize by project: `~/.insightd/sessions/YYYY-MM-DD/<project-name>/`
+- Organize by date: `~/.clio/sessions/YYYY-MM-DD/`
+- Organize by project: `~/.clio/sessions/YYYY-MM-DD/<project-name>/`
 - File naming: `conversation-001.md`, `conversation-002.md`, etc.
 
 ### Conversation Markdown Format
@@ -87,14 +87,14 @@ Session Tracker Groups Messages
     ↓
 Markdown Exporter Writes Files
     ↓
-~/.insightd/sessions/YYYY-MM-DD/<project>/conversation-001.md
+~/.clio/sessions/YYYY-MM-DD/<project>/conversation-001.md
 ```
 
 ## UX/UI Considerations
 
 ### Background Operation
 
-- Runs silently in background when `insightd start` is executed
+- Runs silently in background when `clio start` is executed
 - No user interaction required during capture
 - Logs capture activity to system log or file
 
@@ -141,7 +141,7 @@ Markdown Exporter Writes Files
 1. **Cursor Log Format**: What is the exact format and location of Cursor conversation logs? Need to investigate Cursor's storage mechanism.
 2. **Session Boundaries**: How do we determine when a development session ends?
    - Time-based (30 minutes of inactivity)?
-   - Manual `insightd end-session`?
+   - Manual `clio end-session`?
    - Per-project tracking?
 3. **Project Detection**: How do we determine which project a conversation belongs to?
    - Parse from conversation content?

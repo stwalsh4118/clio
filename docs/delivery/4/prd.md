@@ -130,7 +130,7 @@ Query Interface Available
 
 ### Must Have
 
-1. SQLite database is created in configured location (`~/.insightd/insightd.db`)
+1. SQLite database is created in configured location (`~/.clio/clio.db`)
 2. Database schema includes sessions, conversations, and commits tables
 3. Full-text search indexes are created for keyword searching
 4. New conversations are automatically indexed as they are captured

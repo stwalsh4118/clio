@@ -12,7 +12,7 @@ Before we can capture insights, we need a working application with a CLI interfa
 
 ## User Stories
 
-**As a developer**, I want to install and configure the insightd tool so that I can begin using it to capture my development insights.
+**As a developer**, I want to install and configure the clio tool so that I can begin using it to capture my development insights.
 
 **As a developer**, I want to start and stop the monitoring service via CLI commands so that I can control when data capture is active.
 
@@ -37,29 +37,29 @@ Before we can capture insights, we need a working application with a CLI interfa
 - Help text and documentation
 
 **3. Configuration Management (Viper)**
-- Configuration file location: `~/.insightd/config.yaml`
+- Configuration file location: `~/.clio/config.yaml`
 - Environment variable support
 - Default configuration values
 - Configuration validation
 
 **4. Basic Commands**
-- `insightd start` - Start background monitoring daemon
-- `insightd stop` - Stop monitoring daemon
-- `insightd status` - Check if daemon is running
-- `insightd config` - View and modify configuration
-  - `insightd config --show` - Display current configuration
-  - `insightd config --add-watch <path>` - Add directory to watch list
-  - `insightd config --set-blog-repo <path>` - Set blog repository path
+- `clio start` - Start background monitoring daemon
+- `clio stop` - Stop monitoring daemon
+- `clio status` - Check if daemon is running
+- `clio config` - View and modify configuration
+  - `clio config --show` - Display current configuration
+  - `clio config --add-watch <path>` - Add directory to watch list
+  - `clio config --set-blog-repo <path>` - Set blog repository path
 
 **5. File Structure Setup**
-- Create `~/.insightd/` directory structure
+- Create `~/.clio/` directory structure
 - Initialize configuration file with defaults
 - Set up session storage directories
 
 ### Configuration Schema
 
 ```yaml
-# ~/.insightd/config.yaml
+# ~/.clio/config.yaml
 watched_directories:
   - ~/projects/stream-tv
   - ~/projects/work-project
@@ -67,9 +67,9 @@ watched_directories:
 blog_repository: ~/repos/blog
 
 storage:
-  base_path: ~/.insightd
-  sessions_path: ~/.insightd/sessions
-  database_path: ~/.insightd/insightd.db
+  base_path: ~/.clio
+  sessions_path: ~/.clio/sessions
+  database_path: ~/.clio/clio.db
 
 cursor:
   log_path: ~/.cursor
@@ -84,20 +84,20 @@ session:
 
 ```bash
 # Installation
-go install github.com/user/insightd@latest
+go install github.com/user/clio@latest
 
 # Initial setup (creates config file)
-insightd config --init
+clio config --init
 
 # Basic operations
-insightd start                    # Start monitoring daemon
-insightd stop                     # Stop monitoring
-insightd status                   # Check if running
+clio start                    # Start monitoring daemon
+clio stop                     # Stop monitoring
+clio status                   # Check if running
 
 # Configuration
-insightd config --show            # Display current config
-insightd config --add-watch ~/projects/my-project
-insightd config --set-blog-repo ~/repos/blog
+clio config --show            # Display current config
+clio config --add-watch ~/projects/my-project
+clio config --set-blog-repo ~/repos/blog
 ```
 
 ### Error Messages
@@ -112,14 +112,14 @@ insightd config --set-blog-repo ~/repos/blog
 
 1. Go project initializes successfully with proper module structure
 2. CLI framework provides all base commands (start, stop, status, config)
-3. Configuration file is created in `~/.insightd/config.yaml` on first run
+3. Configuration file is created in `~/.clio/config.yaml` on first run
 4. Configuration persists across application restarts
-5. `insightd config --show` displays current configuration
-6. `insightd config --add-watch` successfully adds directories to watch list
-7. `insightd config --set-blog-repo` successfully sets blog repository path
-8. `insightd start` creates background daemon process
-9. `insightd stop` gracefully stops daemon process
-10. `insightd status` accurately reports daemon state
+5. `clio config --show` displays current configuration
+6. `clio config --add-watch` successfully adds directories to watch list
+7. `clio config --set-blog-repo` successfully sets blog repository path
+8. `clio start` creates background daemon process
+9. `clio stop` gracefully stops daemon process
+10. `clio status` accurately reports daemon state
 11. All commands provide helpful error messages for invalid inputs
 12. Configuration validation prevents invalid settings
 

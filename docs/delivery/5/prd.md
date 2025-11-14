@@ -25,19 +25,19 @@ Users need a way to verify that data is being captured correctly and to explore 
 ### Components
 
 **1. List Command**
-- `insightd list` - List recent sessions
+- `clio list` - List recent sessions
 - Support filtering by: `--hours`, `--days`, `--project`
 - Display: session ID, project, start time, duration, conversation count, commit count
 - Pagination for large result sets
 
 **2. Search Command**
-- `insightd search <query>` - Full-text search across conversations and commits
+- `clio search <query>` - Full-text search across conversations and commits
 - Highlight matching content in results
 - Support filtering by date range and project
 - Rank results by relevance
 
 **3. Show Command**
-- `insightd show session <id>` - Display full details of a session
+- `clio show session <id>` - Display full details of a session
 - Show conversation summaries
 - Show commit list with messages
 - Link to markdown files for full content
@@ -51,17 +51,17 @@ Users need a way to verify that data is being captured correctly and to explore 
 
 ```bash
 # List recent sessions
-insightd list --hours 24
-insightd list --project stream-tv
-insightd list --days 7
+clio list --hours 24
+clio list --project stream-tv
+clio list --days 7
 
 # Search for keywords
-insightd search "websocket error"
-insightd search "database connection" --project stream-tv
-insightd search "authentication" --hours 48
+clio search "websocket error"
+clio search "database connection" --project stream-tv
+clio search "authentication" --hours 48
 
 # Show session details
-insightd show session abc123
+clio show session abc123
 ```
 
 ### Output Format
@@ -128,12 +128,12 @@ Commits:
 
 ### Must Have
 
-1. `insightd list` command displays recent sessions in readable format
-2. `insightd list --hours N` filters sessions by time range
-3. `insightd list --project <name>` filters sessions by project
-4. `insightd search <query>` performs full-text search across conversations and commits
+1. `clio list` command displays recent sessions in readable format
+2. `clio list --hours N` filters sessions by time range
+3. `clio list --project <name>` filters sessions by project
+4. `clio search <query>` performs full-text search across conversations and commits
 5. Search results show relevant context (matching conversation snippets)
-6. `insightd show session <id>` displays full session details
+6. `clio show session <id>` displays full session details
 7. Show command includes links to markdown files
 8. Commands handle invalid inputs gracefully with helpful error messages
 9. Commands return results in reasonable time (<1 second for typical queries)
