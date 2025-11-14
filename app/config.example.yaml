@@ -1,0 +1,31 @@
+# Clio Configuration File
+# This is an example configuration file showing all available options.
+# Copy this to ~/.clio/config.yaml and customize as needed.
+
+# Directories to monitor for development activity
+watched_directories:
+  - ~/projects/stream-tv
+  - ~/projects/work-project
+
+# Path to your blog repository where generated content will be stored
+blog_repository: ~/repos/blog
+
+# Storage configuration
+storage:
+  # Base directory for clio data
+  base_path: ~/.clio
+  # Directory where session data is stored
+  sessions_path: ~/.clio/sessions
+  # Path to the SQLite database file
+  database_path: ~/.clio/clio.db
+
+# Cursor IDE configuration
+cursor:
+  # Path to Cursor's log directory
+  log_path: ~/.cursor
+
+# Session management configuration
+session:
+  # Minutes of inactivity before a session is considered ended
+  inactivity_timeout_minutes: 30
+
