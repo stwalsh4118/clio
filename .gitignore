@@ -28,8 +28,8 @@ go.work
 .DS_Store
 Thumbs.db
 
-# Go module checksum
-app/go.sum
+# Go module checksum (go.sum should be committed, but we exclude it if needed)
+# Note: go.sum is typically committed to ensure reproducible builds
 
 # Built binaries
 app/clio
