@@ -72,6 +72,7 @@ All data must be sense-checked for consistency and accuracy.
 - No gold plating or scope creep is allowed.
 - All work must be scoped to the specific task at hand.
 - Any identified improvements or optimizations must be proposed as separate tasks.
+- Consult API specifications before implementing to avoid duplication.
 
 ## 2.5 Change Management Rules
 
@@ -235,7 +236,7 @@ All status transitions must be logged in the PBI's history with timestamp and us
   - `## Requirements`
   - `## Implementation Plan`
   - `## Verification`
-  - `## Files Modified`
+  - `## Files Modified` (must include list of API specification files updated, if any)
 
 ## 4.2 Principles
 1. Each task must have its own dedicated markdown file.
@@ -288,6 +289,8 @@ Example of the corresponding update in 1-tasks.md:
 
 - **event_transition on "start_work" from Agreed to InProgress**:
   1. Verify no other tasks are InProgress for the same PBI.
+  1a. Identify which systems/services the task will modify.
+  1b. Load the relevant API specification files from `docs/api-specs/` into context before beginning implementation.
   2. Create a new branch for the task if using version control.
   3. Log start time and assignee in task history.
   4. Update task documentation with implementation start details.
@@ -295,12 +298,17 @@ Example of the corresponding update in 1-tasks.md:
 - **event_transition on "submit_for_review" from InProgress to Review**:
   1. Ensure all task requirements are met.
   2. Run all relevant tests and ensure they pass.
-  3. Run automated code review using `coderabbit review --base main --plain` to perform AI-driven code review.
-  4. Review the coderabbit results and address any critical issues found before proceeding.
-  5. Update task documentation with implementation details.
-  6. Create a pull request or mark as ready for review.
-  7. Notify the User that review is needed, including a summary of the coderabbit review results.
-  8. Log submission for review in task history.
+  3. **Run Code Quality Tools** (see Section 4.6.1 for details):
+     - For Go code: Run `golangci-lint run` and `go vet ./...` in the `api/` directory
+     - Address all errors and warnings before proceeding
+  4. Run automated code review using `coderabbit review --base main --plain` to perform AI-driven code review.
+  5. Review the coderabbit results and address any critical issues found before proceeding.
+  6. Update task documentation with implementation details.
+  6a. If the task created or modified any APIs, update the relevant API specification files in `docs/api-specs/`.
+  6b. Document which API specs were updated in the task's 'Files Modified' section.
+  7. Create a pull request or mark as ready for review.
+  8. Notify the User that review is needed, including a summary of linter and coderabbit review results.
+  9. Log submission for review in task history.
 
 - **event_transition on "approve" from Review to Done**:
   1. Verify all acceptance criteria are met.
@@ -338,6 +346,77 @@ Example of the corresponding update in 1-tasks.md:
   2. Update task documentation with resolution details.
   3. Resume work on the task.
   4. Notify relevant stakeholders that work has resumed.
+
+### 4.6.1 Code Quality Tools
+
+> Rationale: Ensures consistent code quality and catches common issues before code review.
+
+Before submitting any code for review, the following tools MUST be run and all issues addressed:
+
+#### Go (API)
+
+Run these commands from the `api/` directory:
+
+**Quick check (recommended):**
+```bash
+cd api && make check
+```
+This runs all quality checks: formatting, vet, lint, and tests.
+
+**Individual commands:**
+
+1. **golangci-lint**: Comprehensive linting with multiple analyzers
+   ```bash
+   cd api && make lint
+   # or: golangci-lint run
+   ```
+   - Configuration: `api/.golangci.yml`
+   - Must pass with zero errors
+   - Warnings should be addressed or justified
+
+2. **go vet**: Official Go static analysis tool
+   ```bash
+   cd api && make vet
+   # or: go vet ./...
+   ```
+   - Must pass with zero errors
+   - Checks for common Go mistakes
+
+3. **go test**: Run all tests with race detector
+   ```bash
+   cd api && make test-race
+   # or: go test -race ./...
+   ```
+   - All tests must pass
+   - No race conditions detected
+
+4. **Test coverage**: Verify adequate test coverage
+   ```bash
+   cd api && make coverage
+   # or: go test -cover ./...
+   ```
+   - Aim for >80% coverage on new code
+   - Report coverage in task documentation
+
+5. **Format code**: Auto-fix formatting issues
+   ```bash
+   cd api && make fmt
+   # or: gofmt -w .
+   ```
+
+#### TypeScript/JavaScript (Web)
+
+For future web development, establish similar tools:
+- ESLint for linting
+- Prettier for formatting
+- TypeScript compiler checks
+- Unit test execution
+
+#### Linter Exceptions
+
+- If a linter rule must be disabled for a valid reason, add an inline comment explaining why
+- Document any disabled rules in the task's review section
+- Never disable security-related checks without explicit approval
 
 ## 4.7 One In Progress Task Limit
 
@@ -539,3 +618,183 @@ Only one task per PBI should be 'InProgress' at any given time to maintain focus
     *   **Unit Tests**: Located in `test/unit/` mirroring the source directory structure.
     *   **Integration Tests**: Located in `test/integration/` (or `test/<module>/` e.g., `test/server/` as per existing conventions if more appropriate), reflecting the module or subsystem being tested.
 2.  **Test Naming**: Test files and descriptions should be named clearly and descriptively.
+
+# 6. API Specifications Management
+
+> Rationale: Maintains a centralized, concise reference of all system APIs to prevent code duplication and ensure consistency across implementation tasks.
+
+## 6.1 Purpose and Principles
+
+> Rationale: Establishes the role of API specifications in preventing duplicate implementations and maintaining system consistency.
+
+- API specs serve as a concise reference to prevent code duplication
+- Specs document existing APIs, interfaces, schemas, and data contracts
+- Must be consulted before implementing new functionality
+- Updated whenever APIs are created or modified
+
+## 6.2 Location and Organization
+
+> Rationale: Defines where and how API specifications are stored and organized for easy discovery and maintenance.
+
+- **Location Pattern**: `docs/api-specs/<system>/`
+- **Examples**: 
+  - `docs/api-specs/media/`
+  - `docs/api-specs/channels/`
+  - `docs/api-specs/streaming/`
+  - `docs/api-specs/database/`
+- **File Naming**: One markdown file per logical grouping: `<system>-api.md`
+  - Example: `docs/api-specs/media/media-api.md`
+
+## 6.3 Required Content Structure
+
+> Rationale: Standardizes API specification content to ensure all necessary information is captured consistently.
+
+Each API spec file must include the following sections as applicable:
+
+- **REST Endpoints**: HTTP method, path, request/response types (concise format)
+- **Service Interfaces**: Public methods with function signatures
+- **Database Schemas**: Table structures, columns, and relationships
+- **Data Contracts**: Key types, interfaces, and data structures
+
+## 6.4 Format Guidelines
+
+> Rationale: Keeps specifications focused and actionable while avoiding unnecessary verbosity.
+
+- Keep specs concise - just enough information to know what exists and how to use it
+- Use code blocks for examples and signatures
+- Include TypeScript/Go type definitions where applicable
+- No verbose descriptions - focus on signatures, parameters, and brief usage examples
+- Include only essential information needed to avoid reimplementation
+
+## 6.5 Spec Update Requirements
+
+> Rationale: Ensures API specifications remain current with the codebase through the task completion workflow.
+
+- Update specs as part of task completion workflow (see Section 4.6 "submit_for_review")
+- When a task creates or modifies any APIs:
+  - Update the relevant API specification files in `docs/api-specs/`
+  - Document which API specs were updated in the task's 'Files Modified' section
+- If creating a new system/service, create the appropriate directory and API spec file
+- Keep updates minimal and focused on what changed
+
+## 6.6 Spec Loading Requirements
+
+> Rationale: Ensures AI agents have context about existing APIs before implementing new functionality, preventing duplication.
+
+- When starting work on a task (see Section 4.6 "start_work"):
+  - Identify which systems/services the task will modify
+  - Load the relevant API specification files from `docs/api-specs/` into context before beginning implementation
+- Consult specs to determine if functionality already exists before creating new implementations
+- If similar functionality exists, reuse or extend rather than recreate
+
+## 6.7 Infrastructure Components and Reusable Code
+
+> Rationale: Ensures infrastructure components and foundational code are documented and reused, not recreated.
+
+- **Infrastructure Scope**: Internal packages that provide cross-cutting concerns (logging, configuration, middleware, database connections, etc.) are considered infrastructure
+- **Documentation Requirement**: All infrastructure components MUST be documented in `docs/api-specs/infrastructure/infrastructure-api.md`
+- **Reuse Mandate**: ALWAYS check `docs/api-specs/infrastructure/` before implementing any infrastructure functionality
+- **Examples of Infrastructure**:
+  - Logging systems (e.g., zerolog logger package)
+  - Configuration management
+  - Database connection pooling
+  - HTTP middleware (authentication, CORS, request logging)
+  - Error handling utilities
+  - Common validation functions
+- **Rule**: If infrastructure exists, ALWAYS import and use it. NEVER recreate similar functionality
+- **Updates**: When tasks create or modify infrastructure components, update `docs/api-specs/infrastructure/infrastructure-api.md`
+
+## 6.8 API Specification Template Example
+
+> Rationale: Provides a concrete example of the expected format for API specifications.
+
+Below is an example showing the expected concise format:
+
+```markdown
+# Media Service API
+
+Last Updated: 2025-10-26
+
+## REST Endpoints
+
+### POST /api/media/scan
+Triggers media library scan
+- Request: `{ path: string }`
+- Response: `{ taskId: string }`
+
+### GET /api/media
+Lists all media items
+- Query: `?show=string&limit=number`
+- Response: `Media[]`
+
+### GET /api/media/:id
+Get single media item
+- Response: `Media`
+
+## Service Interfaces
+
+### MediaService (Go)
+```go
+type MediaService interface {
+    ScanLibrary(path string) (string, error)
+    GetMedia(filters MediaFilters) ([]Media, error)
+    GetMediaByID(id string) (*Media, error)
+    ExtractMetadata(path string) (*MediaMetadata, error)
+}
+```
+
+### IMediaService (TypeScript)
+```typescript
+interface IMediaService {
+    scanLibrary(path: string): Promise<string>;
+    getMedia(filters: MediaFilters): Promise<Media[]>;
+    getMediaById(id: string): Promise<Media>;
+}
+```
+
+## Database Schema
+
+### media table
+- id (uuid, PK)
+- title (text)
+- file_path (text, unique)
+- duration_seconds (integer)
+- codec (text)
+- resolution (text)
+- created_at (timestamp)
+- updated_at (timestamp)
+
+### Indexes
+- idx_media_file_path (file_path)
+- idx_media_created_at (created_at)
+
+## Data Contracts
+
+### Media (TypeScript)
+```typescript
+interface Media {
+    id: string;
+    title: string;
+    filePath: string;
+    durationSeconds: number;
+    codec: string;
+    resolution: string;
+    createdAt: Date;
+    updatedAt: Date;
+}
+```
+
+### Media (Go)
+```go
+type Media struct {
+    ID              string    `json:"id" db:"id"`
+    Title           string    `json:"title" db:"title"`
+    FilePath        string    `json:"filePath" db:"file_path"`
+    DurationSeconds int       `json:"durationSeconds" db:"duration_seconds"`
+    Codec           string    `json:"codec" db:"codec"`
+    Resolution      string    `json:"resolution" db:"resolution"`
+    CreatedAt       time.Time `json:"createdAt" db:"created_at"`
+    UpdatedAt       time.Time `json:"updatedAt" db:"updated_at"`
+}
+```
+```
