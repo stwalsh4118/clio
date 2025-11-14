@@ -9,7 +9,7 @@ This document lists all tasks associated with PBI 1.
 | Task ID | Name | Status | Description |
 | :------ | :--------------------------------------- | :------- | :--------------------------------- |
 | 1-1 | [Initialize Go module and project structure](./1-1.md) | Proposed | Set up Go module, directory structure (cmd/, internal/, pkg/), and basic build configuration |
-| 1-2 | [Set up Cobra CLI framework with root command](./1-2.md) | Proposed | Install Cobra, create root command structure, set up command scaffolding |
+| 1-2 | [Set up Cobra CLI framework with root command](./1-2.md) | Done | Install Cobra, create root command structure, set up command scaffolding |
 | 1-3 | [Implement configuration management with Viper](./1-3.md) | Proposed | Set up Viper for config file management, environment variables, and default values |
 | 1-4 | [Create config command with subcommands](./1-4.md) | Proposed | Implement config command with --show, --add-watch, --set-blog-repo flags |
 | 1-5 | [Implement start/stop/status commands](./1-5.md) | Proposed | Basic daemon process management (background process, PID file, graceful shutdown) |
