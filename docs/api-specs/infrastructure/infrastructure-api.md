@@ -45,6 +45,44 @@ func IsDuplicate(path string, paths []string) bool
 - Path validation with security checks (prevents traversal, validates symlinks)
 - Duplicate detection for watched directories
 
+### Daemon Process Management
+
+**Package**: `github.com/stwalsh4118/clio/internal/daemon`
+
+**Main Functions**:
+```go
+func WritePID(pid int) error
+func ReadPID() (int, error)
+func RemovePIDFile() error
+func PIDFileExists() (bool, error)
+func IsProcessRunning(pid int) (bool, error)
+func IsClioProcess(pid int) (bool, error)
+func SendSignal(pid int, sig os.Signal) error
+func WaitForProcessExit(pid int, timeout time.Duration) error
+func VerifyDaemonRunning() (bool, bool, error)
+```
+
+**Daemon Type**:
+```go
+type Daemon struct {
+    ctx    context.Context
+    cancel context.CancelFunc
+    done   chan struct{}
+}
+
+func NewDaemon() (*Daemon, error)
+func (d *Daemon) Run() error
+func (d *Daemon) Shutdown()
+```
+
+**Features**:
+- PID file management at `~/.clio/clio.pid` with restrictive permissions (0600)
+- Process verification to ensure PID matches clio daemon
+- Graceful shutdown handling (SIGTERM/SIGINT)
+- Symlink attack protection for PID file paths
+- PID reuse attack detection
+- Stale PID file detection and cleanup
+
 ## Planned Infrastructure (from PRD)
 
 The following infrastructure components are planned but not yet implemented:
