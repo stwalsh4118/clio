@@ -47,17 +47,10 @@ func (p *parser) openDatabase() error {
 		return nil // Already open
 	}
 
-	// Open database in read-only mode to avoid locking issues with Cursor
-	dsn := fmt.Sprintf("file:%s?mode=ro", p.dbPath)
-	db, err := sql.Open("sqlite", dsn)
+	// Use shared helper function to open Cursor database
+	db, err := OpenCursorDatabase(p.config)
 	if err != nil {
-		return fmt.Errorf("failed to open database: %w", err)
-	}
-
-	// Test the connection
-	if err := db.Ping(); err != nil {
-		db.Close()
-		return fmt.Errorf("failed to ping database: %w", err)
+		return err
 	}
 
 	p.db = db
