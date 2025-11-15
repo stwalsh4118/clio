@@ -17,5 +17,6 @@ This document lists all tasks associated with PBI 2.
 | 2-7 | [Implement project detection mechanism](./2-7.md) | Proposed | Mechanism to detect which project a conversation belongs to |
 | 2-8 | [Handle conversation updates and modifications](./2-8.md) | Proposed | Handle updates to existing conversations that are modified after initial capture |
 | 2-9 | [Add error handling and logging](./2-9.md) | Proposed | Comprehensive error handling and logging throughout the capture system |
-| 2-10 | [E2E CoS Test](./2-10.md) | Proposed | End-to-end test verifying all 11 acceptance criteria from PBI 2 |
+| 2-10 | [Integrate Cursor capture components into daemon](./2-10.md) | Proposed | Wire together watcher, parser, project detector, session tracker, and exporter into daemon |
+| 2-11 | [E2E CoS Test](./2-11.md) | Proposed | End-to-end test verifying all 11 acceptance criteria from PBI 2 |
 
