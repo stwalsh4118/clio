@@ -116,8 +116,8 @@ func setDefaults() {
 	viper.SetDefault("storage.sessions_path", filepath.Join(homeDir, configDirName, "sessions"))
 	viper.SetDefault("storage.database_path", filepath.Join(homeDir, configDirName, "clio.db"))
 
-	// Cursor log path
-	viper.SetDefault("cursor.log_path", filepath.Join(homeDir, ".cursor"))
+	// Cursor log path - user must configure this explicitly
+	viper.SetDefault("cursor.log_path", "")
 
 	// Session configuration
 	viper.SetDefault("session.inactivity_timeout_minutes", 30)

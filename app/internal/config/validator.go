@@ -296,38 +296,43 @@ func ValidateStoragePaths(storage StorageConfig) error {
 	return nil
 }
 
-// ValidateCursorPath validates that the cursor log path exists if provided.
-// This is optional, so empty path is valid. If the path is set but doesn't exist,
-// that's also okay since it's optional functionality - the path may be created later.
+// ValidateCursorPath validates that the cursor log path exists, is a directory, and is readable.
+// The path is required for Cursor capture functionality.
 func ValidateCursorPath(path string) error {
 	if path == "" {
-		// Cursor log path is optional
-		return nil
+		return fmt.Errorf("cursor log path is required")
 	}
 
-	// Expand and check if path exists
+	// Expand and resolve path
 	expandedPath := expandHomeDir(path)
 	resolvedPath, err := filepath.EvalSymlinks(expandedPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// Path doesn't exist - that's okay for optional cursor log path
-			// It may be created later or the user may set it when needed
-			return nil
+			return fmt.Errorf("cursor log path does not exist")
 		}
 		// Some other error checking the path - return error
 		return fmt.Errorf("failed to check cursor log path: %w", err)
 	}
 
-	// Path exists - validate it's a directory
+	// Check if path exists and is a directory
 	info, err := os.Stat(resolvedPath)
 	if err != nil {
-		// If we can't stat it, that's okay - it's optional
-		return nil
+		if os.IsNotExist(err) {
+			return fmt.Errorf("cursor log path does not exist")
+		}
+		return fmt.Errorf("failed to check cursor log path: %w", err)
 	}
 
 	if !info.IsDir() {
 		return fmt.Errorf("cursor log path is not a directory")
 	}
+
+	// Check if directory is readable
+	file, err := os.Open(resolvedPath)
+	if err != nil {
+		return fmt.Errorf("cursor log path is not readable: %w", err)
+	}
+	file.Close()
 
 	return nil
 }

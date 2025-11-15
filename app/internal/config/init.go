@@ -218,7 +218,7 @@ func CreateDefaultConfig() error {
 			DatabasePath: "~/" + configDirName + "/clio.db",
 		},
 		Cursor: CursorConfig{
-			LogPath: "~/.cursor",
+			LogPath: "", // User must configure this explicitly
 		},
 		Session: SessionConfig{
 			InactivityTimeoutMinutes: 30,
