@@ -473,8 +473,86 @@ type ConversationStorage interface {
 
 - SessionManager automatically uses ConversationStorage for all conversation persistence
 - Conversations are stored immediately when added to sessions
-- LoadSessions migrates existing JSON conversations to normalized tables
-- `conversations_json` column is kept for backward compatibility but set to NULL
+- `conversations_json` column exists in schema but is not used (set to NULL)
+
+## Project Detection
+
+**Package**: `github.com/stwalsh4118/clio/internal/cursor`
+
+### ProjectDetector Interface
+
+```go
+type ProjectDetector interface {
+    DetectProject(conv *Conversation) (string, error)
+    NormalizeProjectName(name string) string
+    RefreshWorkspaceCache() error
+}
+```
+
+### Usage Pattern
+
+1. Create detector: `detector, err := cursor.NewProjectDetector(cfg)`
+2. Detect project: `project, err := detector.DetectProject(conversation)`
+3. Normalize name: `normalized := detector.NormalizeProjectName("/path/to/project")`
+4. Refresh cache: `detector.RefreshWorkspaceCache()` (when workspaces change)
+
+### Detection Method
+
+**Workspace Database Lookup**:
+- Scans `{cursor.log_path}/workspaceStorage/` for workspace hash directories
+- For each workspace:
+  - Reads `workspace.json` to get project path (from `folder` field)
+  - Queries `state.vscdb` → `ItemTable` → `composer.composerData` for composer IDs
+  - Builds mapping: `composerID → workspaceHash → projectPath`
+- Uses cached mapping to detect project for given composer ID
+- Returns normalized "unknown" if composer ID not found in any workspace
+
+### Caching
+
+**In-Memory Cache**:
+- `workspaceHash → projectPath` (from workspace.json files)
+- `composerID → workspaceHash` (from workspace databases)
+- Cache is built on detector creation and can be refreshed via `RefreshWorkspaceCache()`
+
+### Project Name Normalization
+
+**Normalization Rules**:
+- Handles `file://` URIs (extracts path, then directory name)
+- Extracts directory name from full paths (e.g., `/home/user/project` → `project`)
+- Removes special characters that aren't filesystem-safe
+- Converts to lowercase for consistency
+- Removes consecutive dashes
+- Trims leading/trailing dashes
+- Limits length to 255 characters
+- Returns "unknown" if result is empty after normalization
+
+**Examples**:
+- `file:///home/user/my-project` → `my-project`
+- `/home/user/My Project` → `my-project`
+- `/home/user/my@project#123` → `my-project-123`
+- Empty string → `unknown`
+
+### Error Handling
+
+- **Nil conversation**: Returns error and normalized "unknown"
+- **Empty composer ID**: Returns error and normalized "unknown"
+- **Missing workspace.json**: Skips workspace, continues scanning
+- **Locked database**: Logs warning, skips workspace
+- **Invalid JSON**: Logs warning, skips entry
+- **Missing composer ID**: Returns normalized "unknown" (not an error)
+- **Database errors**: Logs warning, continues with other workspaces
+
+### Thread Safety
+
+All ProjectDetector methods are thread-safe and protected with mutex locks.
+
+### Configuration
+
+**Workspace Storage Path**: Constructed from `config.Cursor.LogPath` + `workspaceStorage/`
+
+**Example**:
+- Config: `cursor.log_path: ~/.config/Cursor/User`
+- Workspace storage: `~/.config/Cursor/User/workspaceStorage/`
 
 ## Notes
 
