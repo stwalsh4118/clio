@@ -16,7 +16,7 @@ This document lists all tasks associated with PBI 2.
 | 2-6 | [Implement database storage for conversations](./2-6.md) | Proposed | Database storage functionality to persist conversations and sessions in SQLite database |
 | 2-7 | [Implement project detection mechanism](./2-7.md) | Done | Mechanism to detect which project a conversation belongs to |
 | 2-8 | [Handle conversation updates and modifications](./2-8.md) | Done | Handle updates to existing conversations that are modified after initial capture |
-| 2-9 | [Add error handling and logging](./2-9.md) | Proposed | Comprehensive error handling and logging throughout the capture system |
+| 2-9 | [Add error handling and logging](./2-9.md) | Done | Comprehensive error handling and logging throughout the capture system |
 | 2-10 | [Integrate Cursor capture components into daemon](./2-10.md) | Proposed | Wire together watcher, parser, project detector, session tracker, and storage into daemon |
 | 2-11 | [E2E CoS Test](./2-11.md) | Proposed | End-to-end test verifying all 11 acceptance criteria from PBI 2 |
 
