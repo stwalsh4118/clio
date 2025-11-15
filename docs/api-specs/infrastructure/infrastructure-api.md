@@ -32,6 +32,8 @@ type Config struct {
 **Additional Functions**:
 ```go
 func Save(cfg *Config) error
+func EnsureConfigFile() error
+func EnsureConfigDirectory() error
 func ValidatePath(path string) error
 func IsDuplicate(path string, paths []string) bool
 func ValidateConfig(cfg *Config) error
@@ -46,6 +48,7 @@ func ValidateSessionConfig(session SessionConfig) error
 - Reads from YAML config file at `~/.clio/config.yaml`
 - Environment variable support with `CLIO_` prefix
 - Default values matching PRD schema
+- Automatic config file creation on first run with sensible defaults
 - Automatic home directory expansion (`~` → actual home path)
 - Save configuration to file with path normalization
 - Path validation with security checks (prevents traversal, validates symlinks)
@@ -53,6 +56,7 @@ func ValidateSessionConfig(session SessionConfig) error
 - Comprehensive configuration validation (paths, values, permissions)
 - Security: Watched directories restricted to home directory
 - Security: Sensitive system directories blocked from watching
+- Security: Symlink attack protection for config directory/file creation
 - Validation integrated into loader, CLI commands, and daemon start
 
 ### Daemon Process Management
