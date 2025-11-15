@@ -103,6 +103,57 @@ cursor:
   - `workspace.json` - Maps workspace hash to project path
   - `state.vscdb` - Workspace composer ID references
 
+## File System Watcher
+
+**Package**: `github.com/stwalsh4118/clio/internal/cursor`
+
+### WatcherService Interface
+
+```go
+type WatcherService interface {
+    Start() error
+    Stop() error
+    Watch() (<-chan FileEvent, error)
+}
+```
+
+### FileEvent Type
+
+```go
+type FileEvent struct {
+    Path      string    // Full path to the file
+    EventType string    // Type of event ("WRITE", "CREATE")
+    Timestamp time.Time // When the event occurred
+}
+```
+
+### Usage Pattern
+
+1. Create watcher: `watcher, err := cursor.NewWatcher(cfg)`
+2. Start watching: `watcher.Start()`
+3. Get events channel: `events, err := watcher.Watch()`
+4. Process events: `for event := range events { ... }`
+5. Stop watching: `watcher.Stop()`
+
+### Path Construction
+
+The watcher monitors: `{cursor.log_path}/globalStorage/state.vscdb`
+
+- If file exists: Watches the file directly
+- If file doesn't exist: Watches parent directory (`globalStorage/`) and switches to file watch when created
+
+### Event Filtering
+
+- Only processes `WRITE` and `CREATE` events for `state.vscdb`
+- Filters out events for other files
+- Ignores `CHMOD`, `REMOVE`, `RENAME` events
+
+### Error Handling
+
+- Logs errors but continues monitoring
+- Attempts to re-establish watch if it fails
+- Graceful shutdown on `Stop()`
+
 ## Notes
 
 - All conversation data stored in global `state.vscdb`
@@ -110,4 +161,5 @@ cursor:
 - May be lag between UI and database writes for new conversations
 - Open database in read-only mode to avoid locking issues
 - User must configure the Cursor log path in config - no automatic detection
+- File watcher detects changes but does not track state - state tracking happens in parser/updater tasks
 
