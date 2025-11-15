@@ -170,9 +170,29 @@ The watcher monitors: `{cursor.log_path}/globalStorage/state.vscdb`
 
 ### Error Handling
 
-- Logs errors but continues monitoring
-- Attempts to re-establish watch if it fails
-- Graceful shutdown on `Stop()`
+- **Watcher creation failures**: Returns error, does not start watcher
+- **Watch path determination failures**: Returns error with context (file path, parent directory)
+- **File system errors**: Logs warning, continues monitoring, attempts recovery
+- **Watch recovery**: Automatically attempts to re-establish watch on errors
+- **Channel full**: Logs warning, drops event (non-blocking)
+- **Graceful shutdown**: Closes watcher cleanly, logs shutdown events
+
+### Logging
+
+**Component Tag**: `component=watcher`
+
+**Log Levels**:
+- **Error**: Failed to create watcher, failed to add watch, failed to close watcher, recovery failures
+- **Warn**: File watcher errors, channel full events, failed watch recovery attempts
+- **Info**: Watcher started, watcher stopped, watch path determined, switched to file watch, watch recovered
+- **Debug**: Event received, event filtered, path normalization, watch path determination details
+
+**Structured Fields**:
+- `watch_path`: Path being watched
+- `db_path`: Database file path
+- `event_type`: Type of file system event
+- `file_path`: Path of file in event
+- `error`: Error details
 
 ## Conversation Parser
 
@@ -250,11 +270,45 @@ type Message struct {
 
 ### Error Handling
 
-- **Database locked**: Returns error with clear message
-- **Missing entries**: Logs warning, continues parsing (allows partial conversation extraction)
-- **Corrupted JSON**: Skips entry, continues with remaining messages
-- **Database file not found**: Returns clear error message
-- **Missing bubbles**: Skips missing bubbles, returns partial conversation
+- **Database locked**: Returns error with clear message, logs error
+- **Database open failures**: Returns wrapped error with context (database path), logs error
+- **Missing composer data**: Returns error with composer ID, logs warning
+- **Missing message bubbles**: Logs warning, skips bubble, continues parsing (allows partial conversation extraction)
+- **Corrupted JSON**: Logs warning, skips entry, continues with remaining messages
+- **Invalid timestamps**: Logs warning, uses zero time, continues parsing
+- **Query failures**: Returns wrapped error with context (composer ID, bubble ID), logs error
+- **Partial conversation extraction**: Returns conversation with available messages, logs warning about missing data
+
+**Graceful Degradation**:
+- Continues parsing other conversations when one fails
+- Returns partial conversations when some messages fail to parse
+- Logs all failures but does not crash the system
+
+### Logging
+
+**Component Tag**: `component=parser`
+
+**Log Levels**:
+- **Error**: Database open failures, query failures, JSON parse failures (with context)
+- **Warn**: Missing bubbles, corrupted JSON, invalid timestamps, missing composer data, parsing failures for individual conversations
+- **Info**: Database opened, conversation parsed, all conversations parsed, composer IDs retrieved
+- **Debug**: Composer ID queried, message bubble queried, timestamp parsed, parsing details
+
+**Structured Fields**:
+- `composer_id`: Conversation identifier
+- `bubble_id`: Message bubble identifier
+- `db_path`: Database file path
+- `message_count`: Number of messages
+- `name`: Conversation name
+- `status`: Conversation status
+- `error`: Error details
+- `count`: Number of items (composers, messages, etc.)
+- `total_composers`: Total number of composers
+- `successful`: Number of successful operations
+- `failed`: Number of failed operations
+- `missing`: Number of missing items
+- `corrupted`: Number of corrupted items
+- `invalid_timestamps`: Number of invalid timestamps
 
 ### Incremental Parsing Support
 
@@ -454,12 +508,13 @@ type ConversationStorage interface {
 
 ### Usage Pattern
 
-1. Create storage: `storage, err := cursor.NewConversationStorage(database)`
-2. Store conversation: `storage.StoreConversation(conversation, sessionID)`
-3. Store message: `storage.StoreMessage(message, conversationID)`
-4. Update conversation: `storage.UpdateConversation(conversationID, newMessages)`
-5. Retrieve conversation: `conv, err := storage.GetConversationByComposerID(composerID)`
-6. Retrieve by session: `conversations, err := storage.GetConversationsBySession(sessionID)`
+1. Create logger: `logger, err := logging.NewLogger(cfg)` (or use no-op logger for tests)
+2. Create storage: `storage, err := cursor.NewConversationStorage(database, logger)`
+3. Store conversation: `storage.StoreConversation(conversation, sessionID)`
+4. Store message: `storage.StoreMessage(message, conversationID)`
+5. Update conversation: `storage.UpdateConversation(conversationID, newMessages)`
+6. Retrieve conversation: `conv, err := storage.GetConversationByComposerID(composerID)`
+7. Retrieve by session: `conversations, err := storage.GetConversationsBySession(sessionID)`
 
 ### Storage Details
 
@@ -483,11 +538,41 @@ type ConversationStorage interface {
 
 ### Error Handling
 
-- **Nil conversation/message**: Returns error
-- **Nonexistent session**: Returns error when storing conversation
-- **Nonexistent conversation**: Returns error when storing/updating messages
-- **Database errors**: Returns wrapped errors with context
-- **Transaction rollback**: Automatic on error
+- **Nil conversation/message**: Returns error, logs error
+- **Nonexistent session**: Returns error when storing conversation, logs error with session ID
+- **Nonexistent conversation**: Returns error when storing/updating messages, logs error with conversation ID
+- **Database errors**: Returns wrapped errors with context (conversation ID, session ID, message ID), logs error
+- **Transaction failures**: Returns wrapped error, logs error, automatic rollback
+- **Invalid rows**: Logs warning, skips row, continues processing
+- **Metadata parse failures**: Logs warning, uses empty metadata map, continues processing
+
+**Graceful Degradation**:
+- Skips invalid rows when retrieving conversations/messages
+- Continues processing other items when individual items fail
+- Returns partial results when some items fail to retrieve
+- Logs all failures but does not crash the system
+
+### Logging
+
+**Component Tag**: `component=conversation_storage`
+
+**Log Levels**:
+- **Error**: Database errors, transaction failures, validation failures (with context)
+- **Warn**: Invalid rows skipped, metadata parse failures, retrieval failures for individual items
+- **Info**: Conversation stored, message stored, conversation updated, conversation retrieved
+- **Debug**: Transaction started, transaction committed, message count calculated, storage operations
+
+**Structured Fields**:
+- `composer_id`: Conversation identifier
+- `session_id`: Session identifier
+- `conversation_id`: Conversation identifier
+- `bubble_id`: Message bubble identifier
+- `message_count`: Number of messages
+- `new_message_count`: Number of new messages
+- `count`: Number of items
+- `successful`: Number of successful operations
+- `skipped`: Number of skipped items
+- `error`: Error details
 
 ### Integration with SessionManager
 
@@ -652,6 +737,39 @@ CREATE TABLE processed_conversations (
 
 **Database Access**: Opens Cursor database in read-only mode (`?mode=ro`) to avoid locking issues
 
+## Error Handling and Logging Patterns
+
+### General Principles
+
+All Cursor capture components follow consistent error handling and logging patterns:
+
+**Error Handling**:
+- Errors are wrapped with context using `fmt.Errorf("operation failed: %w", err)`
+- Context includes relevant identifiers (composer ID, session ID, bubble ID, file paths)
+- Critical failures return errors and stop operation
+- Non-critical failures log warnings and continue operation (graceful degradation)
+- Partial results are returned when possible (e.g., conversation with some messages missing)
+
+**Logging**:
+- All components use structured logging with component tags
+- Logger initialization uses fallback to no-op logger if creation fails (prevents component creation failures)
+- Consistent log levels across components:
+  - **Error**: Component failures, corrupted files, database errors, critical system failures
+  - **Warn**: Skipped files, format variations, recoverable issues, missing data, retries
+  - **Info**: Session start/end, file captures, important events, component lifecycle
+  - **Debug**: Detailed operation flow, file paths, parsing details, query details
+
+**Structured Fields**:
+- Consistent field names across components (composer_id, session_id, bubble_id, etc.)
+- Error details always included in error log entries
+- Operation counts and statistics logged for monitoring
+
+**Graceful Degradation**:
+- System continues operating despite individual component failures
+- Individual item failures don't crash the system
+- Partial results returned when full results unavailable
+- All failures logged for troubleshooting
+
 ## Notes
 
 - All conversation data stored in global `state.vscdb`
@@ -663,4 +781,5 @@ CREATE TABLE processed_conversations (
 - Parser focuses on extraction only - session tracking and markdown export are separate tasks
 - Sessions are grouped by project - project detection (task 2-7) provides project name
 - Session manager persists state across application restarts
+- All components include comprehensive error handling and logging for stable operation
 
