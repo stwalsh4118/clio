@@ -81,12 +81,41 @@ func (u *conversationUpdater) getComposerMessageCount(composerID string) (int, e
 	query := "SELECT value FROM cursorDiskKV WHERE key = ?"
 
 	var valueBlob []byte
-	err = cursorDB.QueryRow(query, key).Scan(&valueBlob)
-	if err != nil {
+	// Retry query with exponential backoff on SQLITE_BUSY errors
+	maxRetries := 5
+	baseDelay := 50 * time.Millisecond
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		err = cursorDB.QueryRow(query, key).Scan(&valueBlob)
+		if err == nil {
+			break // Success
+		}
+		
+		// Only retry on SQLITE_BUSY errors
+		if err != sql.ErrNoRows && !IsSQLiteBusyError(err) {
+			return 0, fmt.Errorf("failed to query composer data: %w", err)
+		}
+		
 		if err == sql.ErrNoRows {
 			return 0, fmt.Errorf("composer data not found for ID: %s", composerID)
 		}
-		return 0, fmt.Errorf("failed to query composer data: %w", err)
+		
+		// Log diagnostics on first retry attempt
+		if attempt == 0 {
+			LogSQLiteBusyDiagnostics(err, "conversation_updater", fmt.Sprintf("getComposerMessageCount(%s)", composerID))
+		}
+		
+		// Calculate exponential backoff delay
+		delay := baseDelay * time.Duration(1<<uint(attempt))
+		if delay > 2*time.Second {
+			delay = 2 * time.Second
+		}
+		
+		u.logger.Debug("database busy, retrying query", "composer_id", composerID, "attempt", attempt+1, "max_retries", maxRetries, "delay_ms", delay.Milliseconds())
+		time.Sleep(delay)
+	}
+	
+	if err != nil {
+		return 0, fmt.Errorf("failed to query composer data after %d retries: %w", maxRetries, err)
 	}
 
 	// Parse JSON to get message count

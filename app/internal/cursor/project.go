@@ -259,8 +259,9 @@ func (pd *projectDetector) scanWorkspaceDatabase(workspaceDir, workspaceHash str
 		return fmt.Errorf("failed to check database: %w", err)
 	}
 
-	// Open database in read-only mode
-	dsn := fmt.Sprintf("file:%s?mode=ro", dbPath)
+	// Open database in read-only mode with busy timeout to handle concurrent access
+	// Add busy_timeout (5 seconds = 5000ms) to retry when database is locked
+	dsn := fmt.Sprintf("file:%s?mode=ro&_busy_timeout=5000", dbPath)
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return fmt.Errorf("failed to open workspace database: %w", err)

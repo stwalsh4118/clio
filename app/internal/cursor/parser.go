@@ -88,6 +88,42 @@ func (p *parser) Close() error {
 	return nil
 }
 
+// retryQueryWithBackoff retries a database query function with exponential backoff on SQLITE_BUSY errors
+func (p *parser) retryQueryWithBackoff(maxRetries int, fn func() error) error {
+	var lastErr error
+	baseDelay := 50 * time.Millisecond
+	
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		err := fn()
+		if err == nil {
+			return nil
+		}
+		
+		lastErr = err
+		
+		// Only retry on SQLITE_BUSY errors
+		if !IsSQLiteBusyError(err) {
+			return err
+		}
+		
+		// Log diagnostics on first retry attempt
+		if attempt == 0 {
+			LogSQLiteBusyDiagnostics(err, "parser", "query")
+		}
+		
+		// Calculate exponential backoff delay
+		delay := baseDelay * time.Duration(1<<uint(attempt))
+		if delay > 2*time.Second {
+			delay = 2 * time.Second
+		}
+		
+		p.logger.Debug("database busy, retrying query", "attempt", attempt+1, "max_retries", maxRetries, "delay_ms", delay.Milliseconds())
+		time.Sleep(delay)
+	}
+	
+	return fmt.Errorf("query failed after %d retries: %w", maxRetries, lastErr)
+}
+
 // GetComposerIDs retrieves all composer IDs from the database
 func (p *parser) GetComposerIDs() ([]string, error) {
 	if err := p.openDatabase(); err != nil {
@@ -96,9 +132,14 @@ func (p *parser) GetComposerIDs() ([]string, error) {
 
 	p.logger.Debug("querying composer IDs")
 
-	// Query all composerData keys
+	// Query all composerData keys with retry logic
 	query := "SELECT key FROM cursorDiskKV WHERE key LIKE 'composerData:%'"
-	rows, err := p.db.Query(query)
+	var rows *sql.Rows
+	err := p.retryQueryWithBackoff(5, func() error {
+		var queryErr error
+		rows, queryErr = p.db.Query(query)
+		return queryErr
+	})
 	if err != nil {
 		p.logger.Error("failed to query composer IDs", "error", err)
 		return nil, fmt.Errorf("failed to query composer IDs: %w", err)
@@ -216,7 +257,9 @@ func (p *parser) queryComposerData(composerID string) (*composerDataJSON, error)
 	p.logger.Debug("querying composer data", "composer_id", composerID)
 
 	var valueBlob []byte
-	err := p.db.QueryRow(query, key).Scan(&valueBlob)
+	err := p.retryQueryWithBackoff(5, func() error {
+		return p.db.QueryRow(query, key).Scan(&valueBlob)
+	})
 	if err != nil {
 		if err == sql.ErrNoRows {
 			p.logger.Warn("composer data not found", "composer_id", composerID)
@@ -266,7 +309,9 @@ func (p *parser) queryMessageBubbles(composerID string, headers []struct {
 		query := "SELECT value FROM cursorDiskKV WHERE key = ?"
 
 		var valueBlob []byte
-		err := p.db.QueryRow(query, key).Scan(&valueBlob)
+		err := p.retryQueryWithBackoff(5, func() error {
+			return p.db.QueryRow(query, key).Scan(&valueBlob)
+		})
 		if err != nil {
 			if err == sql.ErrNoRows {
 				// Missing bubble - log warning but continue
