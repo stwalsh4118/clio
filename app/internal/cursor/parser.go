@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/stwalsh4118/clio/internal/config"
+	"github.com/stwalsh4118/clio/internal/logging"
 	_ "modernc.org/sqlite" // SQLite driver
 )
 
@@ -24,6 +25,7 @@ type parser struct {
 	config *config.Config
 	db     *sql.DB
 	dbPath string
+	logger logging.Logger
 }
 
 // NewParser creates a new parser instance
@@ -32,12 +34,21 @@ func NewParser(cfg *config.Config) (ParserService, error) {
 		return nil, fmt.Errorf("config cannot be nil")
 	}
 
+	// Create logger (use component-specific logger)
+	logger, err := logging.NewLogger(cfg)
+	if err != nil {
+		// If logger creation fails, use no-op logger (don't fail parser creation)
+		logger = logging.NewNoopLogger()
+	}
+	logger = logger.With("component", "parser")
+
 	// Construct database path
 	dbPath := filepath.Join(cfg.Cursor.LogPath, "globalStorage", "state.vscdb")
 
 	return &parser{
 		config: cfg,
 		dbPath: dbPath,
+		logger: logger,
 	}, nil
 }
 
@@ -47,13 +58,17 @@ func (p *parser) openDatabase() error {
 		return nil // Already open
 	}
 
+	p.logger.Debug("opening Cursor database", "db_path", p.dbPath)
+
 	// Use shared helper function to open Cursor database
 	db, err := OpenCursorDatabase(p.config)
 	if err != nil {
-		return err
+		p.logger.Error("failed to open Cursor database", "error", err, "db_path", p.dbPath)
+		return fmt.Errorf("failed to open Cursor database: %w", err)
 	}
 
 	p.db = db
+	p.logger.Info("opened Cursor database", "db_path", p.dbPath)
 	return nil
 }
 
@@ -62,9 +77,15 @@ func (p *parser) Close() error {
 	if p.db == nil {
 		return nil
 	}
+	p.logger.Debug("closing Cursor database connection")
 	err := p.db.Close()
 	p.db = nil
-	return err
+	if err != nil {
+		p.logger.Error("failed to close database connection", "error", err)
+		return err
+	}
+	p.logger.Info("closed Cursor database connection")
+	return nil
 }
 
 // GetComposerIDs retrieves all composer IDs from the database
@@ -73,10 +94,13 @@ func (p *parser) GetComposerIDs() ([]string, error) {
 		return nil, err
 	}
 
+	p.logger.Debug("querying composer IDs")
+
 	// Query all composerData keys
 	query := "SELECT key FROM cursorDiskKV WHERE key LIKE 'composerData:%'"
 	rows, err := p.db.Query(query)
 	if err != nil {
+		p.logger.Error("failed to query composer IDs", "error", err)
 		return nil, fmt.Errorf("failed to query composer IDs: %w", err)
 	}
 	defer rows.Close()
@@ -85,6 +109,7 @@ func (p *parser) GetComposerIDs() ([]string, error) {
 	for rows.Next() {
 		var key string
 		if err := rows.Scan(&key); err != nil {
+			p.logger.Warn("failed to scan composer ID row", "error", err)
 			continue // Skip invalid rows
 		}
 		// Extract composer ID from key format: "composerData:{composerId}"
@@ -95,9 +120,11 @@ func (p *parser) GetComposerIDs() ([]string, error) {
 	}
 
 	if err := rows.Err(); err != nil {
+		p.logger.Error("error iterating composer IDs", "error", err)
 		return nil, fmt.Errorf("error iterating composer IDs: %w", err)
 	}
 
+	p.logger.Info("retrieved composer IDs", "count", len(composerIDs))
 	return composerIDs, nil
 }
 
@@ -107,9 +134,12 @@ func (p *parser) ParseConversation(composerID string) (*Conversation, error) {
 		return nil, err
 	}
 
+	p.logger.Debug("parsing conversation", "composer_id", composerID)
+
 	// Get composer data
 	composerData, err := p.queryComposerData(composerID)
 	if err != nil {
+		p.logger.Error("failed to query composer data", "composer_id", composerID, "error", err)
 		return nil, fmt.Errorf("failed to query composer data: %w", err)
 	}
 
@@ -130,31 +160,39 @@ func (p *parser) ParseConversation(composerID string) (*Conversation, error) {
 	if err != nil {
 		// Log error but return partial conversation
 		// This allows us to get conversation metadata even if some messages fail
+		p.logger.Warn("failed to query message bubbles, returning partial conversation", "composer_id", composerID, "error", err)
 		return conversation, fmt.Errorf("failed to query message bubbles: %w", err)
 	}
 
 	conversation.Messages = messages
+	p.logger.Info("parsed conversation", "composer_id", composerID, "name", conversation.Name, "message_count", len(messages), "status", conversation.Status)
 	return conversation, nil
 }
 
 // ParseAllConversations parses all conversations in the database
 func (p *parser) ParseAllConversations() ([]*Conversation, error) {
+	p.logger.Debug("parsing all conversations")
+
 	composerIDs, err := p.GetComposerIDs()
 	if err != nil {
 		return nil, err
 	}
 
 	var conversations []*Conversation
+	var errorCount int
 	for _, composerID := range composerIDs {
 		conv, err := p.ParseConversation(composerID)
 		if err != nil {
 			// Log error but continue with other conversations
 			// This allows us to parse as many conversations as possible
+			p.logger.Warn("failed to parse conversation, skipping", "composer_id", composerID, "error", err)
+			errorCount++
 			continue
 		}
 		conversations = append(conversations, conv)
 	}
 
+	p.logger.Info("parsed all conversations", "total_composers", len(composerIDs), "successful", len(conversations), "failed", errorCount)
 	return conversations, nil
 }
 
@@ -175,18 +213,23 @@ func (p *parser) queryComposerData(composerID string) (*composerDataJSON, error)
 	key := fmt.Sprintf("composerData:%s", composerID)
 	query := "SELECT value FROM cursorDiskKV WHERE key = ?"
 
+	p.logger.Debug("querying composer data", "composer_id", composerID)
+
 	var valueBlob []byte
 	err := p.db.QueryRow(query, key).Scan(&valueBlob)
 	if err != nil {
 		if err == sql.ErrNoRows {
+			p.logger.Warn("composer data not found", "composer_id", composerID)
 			return nil, fmt.Errorf("composer data not found for ID: %s", composerID)
 		}
+		p.logger.Error("failed to query composer data", "composer_id", composerID, "error", err)
 		return nil, fmt.Errorf("failed to query composer data: %w", err)
 	}
 
 	// Parse JSON
 	var composerData composerDataJSON
 	if err := json.Unmarshal(valueBlob, &composerData); err != nil {
+		p.logger.Error("failed to parse composer data JSON", "composer_id", composerID, "error", err)
 		return nil, fmt.Errorf("failed to parse composer data JSON: %w", err)
 	}
 
@@ -195,6 +238,7 @@ func (p *parser) queryComposerData(composerID string) (*composerDataJSON, error)
 		composerData.ComposerID = composerID
 	}
 
+	p.logger.Debug("queried composer data", "composer_id", composerID, "name", composerData.Name, "message_count", len(composerData.FullConversationHeadersOnly))
 	return &composerData, nil
 }
 
@@ -212,6 +256,9 @@ func (p *parser) queryMessageBubbles(composerID string, headers []struct {
 	Type     int    `json:"type"`
 }) ([]Message, error) {
 	var messages []Message
+	var missingCount, corruptedCount, invalidTimestampCount int
+
+	p.logger.Debug("querying message bubbles", "composer_id", composerID, "header_count", len(headers))
 
 	for _, header := range headers {
 		// Query bubble data
@@ -223,8 +270,11 @@ func (p *parser) queryMessageBubbles(composerID string, headers []struct {
 		if err != nil {
 			if err == sql.ErrNoRows {
 				// Missing bubble - log warning but continue
+				p.logger.Warn("missing message bubble", "composer_id", composerID, "bubble_id", header.BubbleID)
+				missingCount++
 				continue
 			}
+			p.logger.Error("failed to query bubble data", "composer_id", composerID, "bubble_id", header.BubbleID, "error", err)
 			return nil, fmt.Errorf("failed to query bubble data: %w", err)
 		}
 
@@ -232,6 +282,8 @@ func (p *parser) queryMessageBubbles(composerID string, headers []struct {
 		var bubbleData bubbleDataJSON
 		if err := json.Unmarshal(valueBlob, &bubbleData); err != nil {
 			// Corrupted JSON - skip this message but continue
+			p.logger.Warn("corrupted JSON in message bubble, skipping", "composer_id", composerID, "bubble_id", header.BubbleID, "error", err)
+			corruptedCount++
 			continue
 		}
 
@@ -239,7 +291,9 @@ func (p *parser) queryMessageBubbles(composerID string, headers []struct {
 		createdAt, err := parseISO8601Timestamp(bubbleData.CreatedAt)
 		if err != nil {
 			// Invalid timestamp - use zero time but continue
+			p.logger.Warn("invalid timestamp in message bubble, using zero time", "composer_id", composerID, "bubble_id", header.BubbleID, "timestamp", bubbleData.CreatedAt, "error", err)
 			createdAt = time.Time{}
+			invalidTimestampCount++
 		}
 
 		// Identify role from type
@@ -256,6 +310,13 @@ func (p *parser) queryMessageBubbles(composerID string, headers []struct {
 		}
 
 		messages = append(messages, message)
+		p.logger.Debug("parsed message bubble", "composer_id", composerID, "bubble_id", header.BubbleID, "role", role)
+	}
+
+	if missingCount > 0 || corruptedCount > 0 || invalidTimestampCount > 0 {
+		p.logger.Warn("message bubble parsing completed with issues", "composer_id", composerID, "total_headers", len(headers), "successful", len(messages), "missing", missingCount, "corrupted", corruptedCount, "invalid_timestamps", invalidTimestampCount)
+	} else {
+		p.logger.Debug("message bubble parsing completed", "composer_id", composerID, "message_count", len(messages))
 	}
 
 	return messages, nil

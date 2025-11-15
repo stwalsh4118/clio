@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/stwalsh4118/clio/internal/logging"
 )
 
 // ConversationStorage defines the interface for storing and retrieving conversations and messages
@@ -19,17 +21,25 @@ type ConversationStorage interface {
 
 // conversationStorage implements ConversationStorage for database persistence
 type conversationStorage struct {
-	db *sql.DB
+	db     *sql.DB
+	logger logging.Logger
 }
 
 // NewConversationStorage creates a new conversation storage instance
-func NewConversationStorage(db *sql.DB) (ConversationStorage, error) {
+func NewConversationStorage(db *sql.DB, logger logging.Logger) (ConversationStorage, error) {
 	if db == nil {
 		return nil, fmt.Errorf("database cannot be nil")
 	}
+	if logger == nil {
+		return nil, fmt.Errorf("logger cannot be nil")
+	}
+
+	// Use component-specific logger
+	logger = logger.With("component", "conversation_storage")
 
 	return &conversationStorage{
-		db: db,
+		db:     db,
+		logger: logger,
 	}, nil
 }
 
@@ -42,19 +52,25 @@ func (cs *conversationStorage) StoreConversation(conversation *Conversation, ses
 		return fmt.Errorf("session ID cannot be empty")
 	}
 
+	cs.logger.Debug("storing conversation", "composer_id", conversation.ComposerID, "session_id", sessionID, "message_count", len(conversation.Messages))
+
 	// Verify session exists
 	var exists bool
 	err := cs.db.QueryRow("SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?)", sessionID).Scan(&exists)
 	if err != nil {
+		cs.logger.Error("failed to verify session exists", "session_id", sessionID, "error", err)
 		return fmt.Errorf("failed to verify session exists: %w", err)
 	}
 	if !exists {
+		cs.logger.Error("session not found", "session_id", sessionID, "composer_id", conversation.ComposerID)
 		return fmt.Errorf("session not found: %s", sessionID)
 	}
 
 	// Begin transaction
+	cs.logger.Debug("starting transaction for conversation storage", "composer_id", conversation.ComposerID)
 	tx, err := cs.db.Begin()
 	if err != nil {
+		cs.logger.Error("failed to begin transaction", "composer_id", conversation.ComposerID, "error", err)
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
@@ -104,21 +120,25 @@ func (cs *conversationStorage) StoreConversation(conversation *Conversation, ses
 		now,
 	)
 	if err != nil {
+		cs.logger.Error("failed to store conversation", "composer_id", conversation.ComposerID, "session_id", sessionID, "error", err)
 		return fmt.Errorf("failed to store conversation: %w", err)
 	}
 
 	// Store all messages
 	for i := range conversation.Messages {
 		if err := cs.storeMessageInTx(tx, &conversation.Messages[i], conversation.ComposerID); err != nil {
+			cs.logger.Error("failed to store message", "composer_id", conversation.ComposerID, "bubble_id", conversation.Messages[i].BubbleID, "error", err)
 			return fmt.Errorf("failed to store message %s: %w", conversation.Messages[i].BubbleID, err)
 		}
 	}
 
 	// Commit transaction
 	if err := tx.Commit(); err != nil {
+		cs.logger.Error("failed to commit transaction", "composer_id", conversation.ComposerID, "error", err)
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
+	cs.logger.Info("stored conversation", "composer_id", conversation.ComposerID, "session_id", sessionID, "message_count", messageCount)
 	return nil
 }
 
@@ -129,6 +149,7 @@ func (cs *conversationStorage) storeMessageInTx(tx *sql.Tx, message *Message, co
 	if len(message.Metadata) > 0 {
 		metadataBytes, err := json.Marshal(message.Metadata)
 		if err != nil {
+			cs.logger.Warn("failed to marshal message metadata", "conversation_id", conversationID, "bubble_id", message.BubbleID, "error", err)
 			return fmt.Errorf("failed to marshal metadata: %w", err)
 		}
 		metadataJSON = sql.NullString{String: string(metadataBytes), Valid: true}
@@ -156,9 +177,11 @@ func (cs *conversationStorage) storeMessageInTx(tx *sql.Tx, message *Message, co
 		metadataJSON,
 	)
 	if err != nil {
+		cs.logger.Error("failed to insert message", "conversation_id", conversationID, "bubble_id", message.BubbleID, "error", err)
 		return fmt.Errorf("failed to insert message: %w", err)
 	}
 
+	cs.logger.Debug("stored message", "conversation_id", conversationID, "bubble_id", message.BubbleID, "role", message.Role)
 	return nil
 }
 
@@ -171,19 +194,24 @@ func (cs *conversationStorage) StoreMessage(message *Message, conversationID str
 		return fmt.Errorf("conversation ID cannot be empty")
 	}
 
+	cs.logger.Debug("storing single message", "conversation_id", conversationID, "bubble_id", message.BubbleID)
+
 	// Verify conversation exists
 	var exists bool
 	err := cs.db.QueryRow("SELECT EXISTS(SELECT 1 FROM conversations WHERE id = ?)", conversationID).Scan(&exists)
 	if err != nil {
+		cs.logger.Error("failed to verify conversation exists", "conversation_id", conversationID, "error", err)
 		return fmt.Errorf("failed to verify conversation exists: %w", err)
 	}
 	if !exists {
+		cs.logger.Error("conversation not found", "conversation_id", conversationID, "bubble_id", message.BubbleID)
 		return fmt.Errorf("conversation not found: %s", conversationID)
 	}
 
 	// Begin transaction
 	tx, err := cs.db.Begin()
 	if err != nil {
+		cs.logger.Error("failed to begin transaction", "conversation_id", conversationID, "error", err)
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
@@ -229,22 +257,28 @@ func (cs *conversationStorage) UpdateConversation(conversationID string, newMess
 		return fmt.Errorf("conversation ID cannot be empty")
 	}
 	if len(newMessages) == 0 {
+		cs.logger.Debug("no new messages to update", "conversation_id", conversationID)
 		return nil // Nothing to update
 	}
+
+	cs.logger.Debug("updating conversation with new messages", "conversation_id", conversationID, "new_message_count", len(newMessages))
 
 	// Verify conversation exists
 	var exists bool
 	err := cs.db.QueryRow("SELECT EXISTS(SELECT 1 FROM conversations WHERE id = ?)", conversationID).Scan(&exists)
 	if err != nil {
+		cs.logger.Error("failed to verify conversation exists", "conversation_id", conversationID, "error", err)
 		return fmt.Errorf("failed to verify conversation exists: %w", err)
 	}
 	if !exists {
+		cs.logger.Error("conversation not found", "conversation_id", conversationID)
 		return fmt.Errorf("conversation not found: %s", conversationID)
 	}
 
 	// Begin transaction
 	tx, err := cs.db.Begin()
 	if err != nil {
+		cs.logger.Error("failed to begin transaction", "conversation_id", conversationID, "error", err)
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
 	defer tx.Rollback()
@@ -252,6 +286,7 @@ func (cs *conversationStorage) UpdateConversation(conversationID string, newMess
 	// Store all new messages
 	for _, message := range newMessages {
 		if err := cs.storeMessageInTx(tx, message, conversationID); err != nil {
+			cs.logger.Error("failed to store message in update", "conversation_id", conversationID, "bubble_id", message.BubbleID, "error", err)
 			return fmt.Errorf("failed to store message %s: %w", message.BubbleID, err)
 		}
 	}
@@ -303,14 +338,17 @@ func (cs *conversationStorage) UpdateConversation(conversationID string, newMess
 
 	_, err = tx.Exec(updateQuery, args...)
 	if err != nil {
+		cs.logger.Error("failed to update conversation metadata", "conversation_id", conversationID, "error", err)
 		return fmt.Errorf("failed to update conversation: %w", err)
 	}
 
 	// Commit transaction
 	if err := tx.Commit(); err != nil {
+		cs.logger.Error("failed to commit transaction", "conversation_id", conversationID, "error", err)
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
+	cs.logger.Info("updated conversation", "conversation_id", conversationID, "new_message_count", len(newMessages))
 	return nil
 }
 
@@ -324,6 +362,8 @@ func (cs *conversationStorage) GetConversationByComposerID(composerID string) (*
 	if composerID == "" {
 		return nil, fmt.Errorf("composer ID cannot be empty")
 	}
+
+	cs.logger.Debug("retrieving conversation by composer ID", "composer_id", composerID)
 
 	// Query conversation
 	var conv Conversation
@@ -345,18 +385,22 @@ func (cs *conversationStorage) GetConversationByComposerID(composerID string) (*
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {
+			cs.logger.Debug("conversation not found", "composer_id", composerID)
 			return nil, fmt.Errorf("conversation not found: %s", composerID)
 		}
+		cs.logger.Error("failed to query conversation", "composer_id", composerID, "error", err)
 		return nil, fmt.Errorf("failed to query conversation: %w", err)
 	}
 
 	// Query messages
 	messages, err := cs.getMessagesByConversationID(conv.ComposerID)
 	if err != nil {
+		cs.logger.Error("failed to get messages", "composer_id", composerID, "error", err)
 		return nil, fmt.Errorf("failed to get messages: %w", err)
 	}
 
 	conv.Messages = messages
+	cs.logger.Info("retrieved conversation", "composer_id", composerID, "message_count", len(messages))
 	return &conv, nil
 }
 
@@ -366,6 +410,8 @@ func (cs *conversationStorage) GetConversationsBySession(sessionID string) ([]*C
 		return nil, fmt.Errorf("session ID cannot be empty")
 	}
 
+	cs.logger.Debug("retrieving conversations by session", "session_id", sessionID)
+
 	// Query conversations
 	rows, err := cs.db.Query(`
 		SELECT id, composer_id, name, status, message_count, first_message_time, last_message_time, created_at
@@ -374,11 +420,13 @@ func (cs *conversationStorage) GetConversationsBySession(sessionID string) ([]*C
 		ORDER BY created_at ASC
 	`, sessionID)
 	if err != nil {
+		cs.logger.Error("failed to query conversations", "session_id", sessionID, "error", err)
 		return nil, fmt.Errorf("failed to query conversations: %w", err)
 	}
 	defer rows.Close()
 
 	var conversations []*Conversation
+	var skippedCount int
 	for rows.Next() {
 		var conv Conversation
 		var firstMsgTime, lastMsgTime sql.NullTime
@@ -394,12 +442,16 @@ func (cs *conversationStorage) GetConversationsBySession(sessionID string) ([]*C
 			&conv.CreatedAt,
 		)
 		if err != nil {
+			cs.logger.Warn("failed to scan conversation row, skipping", "session_id", sessionID, "error", err)
+			skippedCount++
 			continue // Skip invalid rows
 		}
 
 		// Query messages for this conversation
 		messages, err := cs.getMessagesByConversationID(conv.ComposerID)
 		if err != nil {
+			cs.logger.Warn("failed to get messages for conversation, skipping", "session_id", sessionID, "composer_id", conv.ComposerID, "error", err)
+			skippedCount++
 			continue // Skip conversations with message errors
 		}
 
@@ -408,9 +460,15 @@ func (cs *conversationStorage) GetConversationsBySession(sessionID string) ([]*C
 	}
 
 	if err := rows.Err(); err != nil {
+		cs.logger.Error("error iterating conversations", "session_id", sessionID, "error", err)
 		return nil, fmt.Errorf("error iterating conversations: %w", err)
 	}
 
+	if skippedCount > 0 {
+		cs.logger.Warn("retrieved conversations with skipped entries", "session_id", sessionID, "successful", len(conversations), "skipped", skippedCount)
+	} else {
+		cs.logger.Info("retrieved conversations", "session_id", sessionID, "count", len(conversations))
+	}
 	return conversations, nil
 }
 
@@ -423,11 +481,13 @@ func (cs *conversationStorage) getMessagesByConversationID(conversationID string
 		ORDER BY created_at ASC
 	`, conversationID)
 	if err != nil {
+		cs.logger.Error("failed to query messages", "conversation_id", conversationID, "error", err)
 		return nil, fmt.Errorf("failed to query messages: %w", err)
 	}
 	defer rows.Close()
 
 	var messages []Message
+	var skippedCount int
 	for rows.Next() {
 		var msg Message
 		var metadataJSON sql.NullString
@@ -442,6 +502,8 @@ func (cs *conversationStorage) getMessagesByConversationID(conversationID string
 			&metadataJSON,
 		)
 		if err != nil {
+			cs.logger.Warn("failed to scan message row, skipping", "conversation_id", conversationID, "error", err)
+			skippedCount++
 			continue // Skip invalid rows
 		}
 
@@ -450,6 +512,7 @@ func (cs *conversationStorage) getMessagesByConversationID(conversationID string
 			msg.Metadata = make(map[string]interface{})
 			if err := json.Unmarshal([]byte(metadataJSON.String), &msg.Metadata); err != nil {
 				// If metadata is invalid, use empty map
+				cs.logger.Warn("failed to parse message metadata JSON, using empty map", "conversation_id", conversationID, "bubble_id", msg.BubbleID, "error", err)
 				msg.Metadata = make(map[string]interface{})
 			}
 		} else {
@@ -460,9 +523,13 @@ func (cs *conversationStorage) getMessagesByConversationID(conversationID string
 	}
 
 	if err := rows.Err(); err != nil {
+		cs.logger.Error("error iterating messages", "conversation_id", conversationID, "error", err)
 		return nil, fmt.Errorf("error iterating messages: %w", err)
+	}
+
+	if skippedCount > 0 {
+		cs.logger.Warn("retrieved messages with skipped entries", "conversation_id", conversationID, "successful", len(messages), "skipped", skippedCount)
 	}
 
 	return messages, nil
 }
-
