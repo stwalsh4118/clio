@@ -1,6 +1,6 @@
 # Cursor API
 
-Last Updated: 2025-11-15
+Last Updated: 2025-01-27
 
 ## Storage Locations
 
@@ -154,6 +154,94 @@ The watcher monitors: `{cursor.log_path}/globalStorage/state.vscdb`
 - Attempts to re-establish watch if it fails
 - Graceful shutdown on `Stop()`
 
+## Conversation Parser
+
+**Package**: `github.com/stwalsh4118/clio/internal/cursor`
+
+### ParserService Interface
+
+```go
+type ParserService interface {
+    ParseConversation(composerID string) (*Conversation, error)
+    ParseAllConversations() ([]*Conversation, error)
+    GetComposerIDs() ([]string, error)
+    Close() error
+}
+```
+
+### Data Types
+
+```go
+type Conversation struct {
+    ComposerID string    // Unique identifier for the conversation
+    Name       string    // Conversation title/name
+    Status     string    // Conversation status (e.g., "completed", "active", "none")
+    CreatedAt  time.Time // When the conversation was created
+    Messages   []Message // All messages in chronological order
+}
+
+type Message struct {
+    BubbleID  string                 // Unique identifier for this message bubble
+    Type      int                    // Message type: 1 = user, 2 = agent
+    Role      string                 // Human-readable role: "user" or "agent"
+    Text      string                 // Message content
+    CreatedAt time.Time              // When the message was created
+    Metadata  map[string]interface{} // Additional metadata for future extensibility
+}
+```
+
+### Usage Pattern
+
+1. Create parser: `parser, err := cursor.NewParser(cfg)`
+2. Parse single conversation: `conv, err := parser.ParseConversation(composerID)`
+3. Parse all conversations: `conversations, err := parser.ParseAllConversations()`
+4. Get composer IDs: `ids, err := parser.GetComposerIDs()`
+5. Close parser: `parser.Close()`
+
+### Database Access
+
+- Opens database in read-only mode (`?mode=ro`) to avoid locking issues with Cursor
+- Constructs path: `{cursor.log_path}/globalStorage/state.vscdb`
+- Queries `cursorDiskKV` table for composer data and message bubbles
+- Parses JSON-encoded BLOB values
+
+### Query Methods
+
+**Get Composer Data**:
+- Query: `SELECT value FROM cursorDiskKV WHERE key = 'composerData:{composerId}'`
+- Extracts: `composerId`, `name`, `status`, `createdAt` (Unix milliseconds), `fullConversationHeadersOnly` array
+
+**Get Message Bubbles**:
+- Iterates through `fullConversationHeadersOnly` array
+- For each bubble: `SELECT value FROM cursorDiskKV WHERE key = 'bubbleId:{composerId}:{bubbleId}'`
+- Extracts: `type` (1=user, 2=agent), `text`, `createdAt` (ISO 8601), `bubbleId`
+
+### Timestamp Parsing
+
+- **Composer timestamps**: Unix milliseconds → `time.Time`
+- **Message timestamps**: ISO 8601 string → `time.Time`
+- Supports multiple ISO 8601 formats (RFC3339, RFC3339Nano, custom formats)
+
+### Role Identification
+
+- Type `1` → Role `"user"`
+- Type `2` → Role `"agent"`
+- Other types → Role `"unknown"`
+
+### Error Handling
+
+- **Database locked**: Returns error with clear message
+- **Missing entries**: Logs warning, continues parsing (allows partial conversation extraction)
+- **Corrupted JSON**: Skips entry, continues with remaining messages
+- **Database file not found**: Returns clear error message
+- **Missing bubbles**: Skips missing bubbles, returns partial conversation
+
+### Incremental Parsing Support
+
+- Supports querying specific composer IDs
+- Supports querying all composers
+- Designed for integration with file watcher (task 2-3) and update handling (task 2-8)
+
 ## Notes
 
 - All conversation data stored in global `state.vscdb`
@@ -162,4 +250,5 @@ The watcher monitors: `{cursor.log_path}/globalStorage/state.vscdb`
 - Open database in read-only mode to avoid locking issues
 - User must configure the Cursor log path in config - no automatic detection
 - File watcher detects changes but does not track state - state tracking happens in parser/updater tasks
+- Parser focuses on extraction only - session tracking and markdown export are separate tasks
 
