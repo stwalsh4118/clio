@@ -482,31 +482,32 @@ Only one task per PBI should be 'InProgress' at any given time to maintain focus
 > Rationale: Ensures consistent version control practices when completing tasks, maintaining traceability and automation.
 
 1. **Commit Message Format**:
-   - When a task moves from `Review` to `Done`, create a commit with the message:
-     ```
-     <task_id> <task_description>
-     ```
-   - Example: `1-7 Add pino logging to help debug database connection issues`
+   - All commits MUST use conventional commit style: `<type>(<scope>): <subject>`
+   - Common types: `feat`, `fix`, `docs`, `chore`, `test`, `refactor`, `perf`
+   - Scope should indicate the component/package being modified (e.g., `cursor`, `config`, `deps`)
+   - Subject should be concise and descriptive
+   - Optional body can include detailed changes with bullet points
+   - When a task moves from `Review` to `Done`, commits should reference the task ID in the body or footer
+   - Examples:
+     - `feat(cursor): implement file system watcher for database file`
+     - `chore(deps): add fsnotify dependency for file system watching`
+     - `docs(cursor): update API spec and mark task 2-3 as done`
+     - `fix(config): handle empty cursor log path validation`
 
 2. **Pull Request**:
-   - Title: `[<task_id>] <task_description>`
+   - Title: `[<task_id>] <conventional commit subject>`
    - Include a link to the task in the description
    - Ensure all task requirements are met before marking as `Done`
 
 3. **Automation**:
-   - When a task is marked as `Done`, run:
-     ```bash
-     git acp "<task_id> <task_description>"
-     ```
-   - This command should:
-     1. Stage all changes
-     2. Create a commit with the specified message
-     3. Push to the remote branch
+   - When a task is marked as `Done`, create commits using conventional commit format
+   - Group related changes into logical commits (e.g., dependencies, implementation, tests, documentation)
+   - Each commit should follow the format: `<type>(<scope>): <subject>`
 
 4. **Verification**:
-   - Ensure the commit appears in the task's history
+   - Ensure commits follow conventional commit format
    - Confirm the task status is updated in both the task file and index
-   - Verify the commit message follows the required format
+   - Verify commit messages are descriptive and properly scoped
 
 ## 4.10 Task Index File
 
