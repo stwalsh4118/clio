@@ -23,6 +23,26 @@ SQLite 3.x database with key-value storage:
 - Schema: `CREATE TABLE table_name (key TEXT UNIQUE ON CONFLICT REPLACE, value BLOB)`
 - Values: JSON-encoded BLOBs
 
+### Database Access Helper
+
+**Package**: `github.com/stwalsh4118/clio/internal/cursor`
+
+**Function**:
+```go
+func OpenCursorDatabase(cfg *config.Config) (*sql.DB, error)
+```
+
+Opens the Cursor global `state.vscdb` database in read-only mode (`?mode=ro`) to avoid locking issues. This shared helper function is used by parser, updater, and other components that need to access Cursor's conversation database.
+
+**Usage**:
+```go
+db, err := cursor.OpenCursorDatabase(cfg)
+if err != nil {
+    return err
+}
+defer db.Close()
+```
+
 ## Conversation Data Access
 
 ### Workspace Association
@@ -553,6 +573,84 @@ All ProjectDetector methods are thread-safe and protected with mutex locks.
 **Example**:
 - Config: `cursor.log_path: ~/.config/Cursor/User`
 - Workspace storage: `~/.config/Cursor/User/workspaceStorage/`
+
+## Conversation Update Handler
+
+**Package**: `github.com/stwalsh4118/clio/internal/cursor`
+
+### ConversationUpdater Interface
+
+```go
+type ConversationUpdater interface {
+    ProcessUpdate(composerID string) error
+    HasBeenProcessed(composerID string, messageCount int) bool
+    MarkAsProcessed(composerID string, messageCount int) error
+    DetectUpdatedComposers() ([]string, error)
+    GetProcessedMessageCount(composerID string) (int, error)
+}
+```
+
+### Usage Pattern
+
+1. Create updater: `updater, err := cursor.NewConversationUpdater(cfg, db, parser, storage, sessionManager)`
+2. Detect updates: `updated, err := updater.DetectUpdatedComposers()`
+3. Process updates: `for _, composerID := range updated { updater.ProcessUpdate(composerID) }`
+4. Check processed state: `processed := updater.HasBeenProcessed(composerID, messageCount)`
+
+### Update Detection Workflow
+
+**DetectUpdatedComposers()**:
+- Queries Cursor database for all composer IDs using `ParserService.GetComposerIDs()`
+- For each composer ID, queries `composerData:{composerID}` to get `fullConversationHeadersOnly` array length
+- Compares current message count with processed count from `processed_conversations` table
+- Returns composer IDs where `currentCount > processedCount`
+
+### Incremental Message Parsing
+
+**ProcessUpdate(composerID)**:
+- Gets processed message count from `processed_conversations` table
+- Parses full conversation using `ParserService.ParseConversation(composerID)`
+- Extracts only messages beyond processed count (slices `Messages` array)
+- Updates conversation using `ConversationStorage.UpdateConversation()` with new messages only
+- Marks conversation as processed with new total message count
+- Updates session metadata (last_activity, updated_at) if conversation belongs to a session
+
+### Processed State Tracking
+
+**Database Schema**:
+```sql
+CREATE TABLE processed_conversations (
+    composer_id TEXT PRIMARY KEY,
+    message_count INTEGER NOT NULL,
+    last_processed_at TIMESTAMP NOT NULL
+);
+```
+
+**State Management**:
+- `GetProcessedMessageCount()`: Returns processed message count (0 if not processed)
+- `HasBeenProcessed()`: Checks if composer ID has been processed with given message count
+- `MarkAsProcessed()`: Updates processed state atomically (uses `ON CONFLICT REPLACE`)
+
+### Error Handling
+
+- **Conversation not found**: Returns nil (treats as new conversation, not an update)
+- **Database errors**: Logs warnings, continues processing other composers
+- **Missing messages**: Parser handles missing bubbles gracefully
+- **Concurrent updates**: SQLite handles locking, transactions ensure atomicity
+- **First-time processing**: If composer ID not in `processed_conversations`, treated as new conversation
+
+### Integration
+
+- **Dependencies**: Requires `ParserService`, `ConversationStorage`, `SessionManager`, and database connection
+- **File Watcher Integration**: Called when `state.vscdb` file modification is detected (task 2-10)
+- **Session Updates**: Automatically updates session `last_activity` when conversations are updated
+- **Atomic Operations**: Uses database transactions for updating messages and processed state together
+
+### Configuration
+
+**Cursor Database Path**: Constructed from `config.Cursor.LogPath + "globalStorage/state.vscdb"`
+
+**Database Access**: Opens Cursor database in read-only mode (`?mode=ro`) to avoid locking issues
 
 ## Notes
 
