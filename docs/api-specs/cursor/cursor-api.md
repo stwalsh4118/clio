@@ -4,13 +4,17 @@ Last Updated: 2025-11-15
 
 ## Storage Locations
 
-### Linux
-- Global: `~/.config/Cursor/User/globalStorage/state.vscdb`
-- Workspace: `~/.config/Cursor/User/workspaceStorage/{workspace-hash}/state.vscdb`
+Paths are relative to the configured `cursor.log_path` (defaults shown below):
 
-### macOS
-- Global: `~/Library/Application Support/Cursor/User/globalStorage/state.vscdb`
-- Workspace: `~/Library/Application Support/Cursor/User/workspaceStorage/{workspace-hash}/state.vscdb`
+### Linux (Default)
+- Base: `~/.config/Cursor/User/` (configured via `cursor.log_path`)
+- Global: `{log_path}/globalStorage/state.vscdb`
+- Workspace: `{log_path}/workspaceStorage/{workspace-hash}/state.vscdb`
+
+### macOS (Default)
+- Base: `~/Library/Application Support/Cursor/User/` (configured via `cursor.log_path`)
+- Global: `{log_path}/globalStorage/state.vscdb`
+- Workspace: `{log_path}/workspaceStorage/{workspace-hash}/state.vscdb`
 
 ## Database Structure
 
@@ -75,10 +79,35 @@ Returns workspace/file context for that message.
 - Monitor `state.vscdb` file modification time
 - Compare `fullConversationHeadersOnly` array length to detect new messages
 
+## Configuration
+
+**Cursor Log Path**: User-configured via `config.Cursor.LogPath` in the application configuration file (`~/.clio/config.yaml`).
+
+**Validation**: The path is validated using `config.ValidateCursorPath()` which ensures:
+- Path is not empty (required)
+- Path exists
+- Path is a directory
+- Directory is readable
+
+**Example Configuration**:
+```yaml
+cursor:
+  log_path: ~/.config/Cursor/User  # Linux (contains globalStorage/ and workspaceStorage/)
+  # or
+  log_path: ~/Library/Application Support/Cursor/User  # macOS (contains globalStorage/ and workspaceStorage/)
+```
+
+**Directory Structure**:
+- `{log_path}/globalStorage/state.vscdb` - Global conversation database
+- `{log_path}/workspaceStorage/{workspace-hash}/` - Workspace-specific data
+  - `workspace.json` - Maps workspace hash to project path
+  - `state.vscdb` - Workspace composer ID references
+
 ## Notes
 
 - All conversation data stored in global `state.vscdb`
 - Workspace databases contain composer ID references only
 - May be lag between UI and database writes for new conversations
 - Open database in read-only mode to avoid locking issues
+- User must configure the Cursor log path in config - no automatic detection
 

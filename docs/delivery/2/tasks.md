@@ -9,7 +9,7 @@ This document lists all tasks associated with PBI 2.
 | Task ID | Name | Status | Description |
 | :------ | :--------------------------------------- | :------- | :--------------------------------- |
 | 2-1 | [Research Cursor log format and storage location](./2-1.md) | Done | Investigate Cursor's log format, storage locations (macOS/Linux), and answer open questions from PRD |
-| 2-2 | [Implement Cursor log discovery service](./2-2.md) | Proposed | Service to locate and validate Cursor log directory paths on different platforms |
+| 2-2 | [Implement Cursor log discovery service](./2-2.md) | Done | Enhanced validation for user-configured Cursor log path pointing to User directory |
 | 2-3 | [Implement file system watcher for Cursor log directory](./2-3.md) | Proposed | File system watcher using fsnotify to monitor Cursor log directory for new and modified files |
 | 2-4 | [Design and implement conversation parser](./2-4.md) | Proposed | Parser to extract messages, identify user vs agent responses, and extract metadata from Cursor logs |
 | 2-5 | [Implement session tracking logic](./2-5.md) | Proposed | Logic to group conversations into sessions with proper boundary detection |
