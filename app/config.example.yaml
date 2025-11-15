@@ -21,8 +21,10 @@ storage:
 
 # Cursor IDE configuration
 cursor:
-  # Path to Cursor's log directory
-  log_path: ~/.cursor
+  # Path to Cursor's User directory (contains both globalStorage and workspaceStorage)
+  # Linux: ~/.config/Cursor/User
+  # macOS: ~/Library/Application Support/Cursor/User
+  log_path: ~/.config/Cursor/User
 
 # Session management configuration
 session:

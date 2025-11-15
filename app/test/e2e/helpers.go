@@ -22,8 +22,9 @@ const (
 // The cleanup function restores the original HOME environment variable and removes the temp directory.
 // It creates the test directory in the current working directory to avoid /tmp which is a sensitive directory.
 func setupTestEnv(t *testing.T) (string, func()) {
-	// Get original HOME
+	// Get original HOME and CURSOR_LOG_PATH
 	originalHome := os.Getenv("HOME")
+	originalCursorLogPath := os.Getenv("CLIO_CURSOR_LOG_PATH")
 
 	// Get current working directory to create test dir there (avoids /tmp)
 	cwd, err := os.Getwd()
@@ -44,8 +45,16 @@ func setupTestEnv(t *testing.T) (string, func()) {
 		t.Fatalf("Failed to create temporary directory: %v", err)
 	}
 
+	// Create temporary cursor log directory (required for validation)
+	cursorLogDir := filepath.Join(tmpDir, "cursor-logs")
+	if err := os.MkdirAll(cursorLogDir, 0755); err != nil {
+		t.Fatalf("Failed to create cursor log directory: %v", err)
+	}
+
 	// Set HOME to temp directory
 	os.Setenv("HOME", tmpDir)
+	// Set cursor log path environment variable (required for validation)
+	os.Setenv("CLIO_CURSOR_LOG_PATH", cursorLogDir)
 
 	// Ensure daemon is stopped before starting tests
 	if err := ensureDaemonStopped(); err != nil {
@@ -62,6 +71,13 @@ func setupTestEnv(t *testing.T) (string, func()) {
 			os.Setenv("HOME", originalHome)
 		} else {
 			os.Unsetenv("HOME")
+		}
+
+		// Restore original CURSOR_LOG_PATH
+		if originalCursorLogPath != "" {
+			os.Setenv("CLIO_CURSOR_LOG_PATH", originalCursorLogPath)
+		} else {
+			os.Unsetenv("CLIO_CURSOR_LOG_PATH")
 		}
 
 		// Remove temporary directory and test base directory if empty
@@ -107,12 +123,15 @@ func getTestExecutable(t *testing.T) string {
 }
 
 // executeCLI executes a CLI command and returns stdout, stderr, and error.
-// It uses the test executable and sets HOME to the test environment.
+// It uses the test executable and sets HOME and CLIO_CURSOR_LOG_PATH to the test environment.
 func executeCLI(t *testing.T, exePath string, args []string) (string, string, error) {
 	cmd := exec.Command(exePath, args...)
 
-	// Set HOME to current test environment
+	// Set HOME and CLIO_CURSOR_LOG_PATH to current test environment
 	cmd.Env = append(os.Environ(), "HOME="+os.Getenv("HOME"))
+	if cursorLogPath := os.Getenv("CLIO_CURSOR_LOG_PATH"); cursorLogPath != "" {
+		cmd.Env = append(cmd.Env, "CLIO_CURSOR_LOG_PATH="+cursorLogPath)
+	}
 
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
