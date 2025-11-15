@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/stwalsh4118/clio/internal/config"
+	"github.com/stwalsh4118/clio/internal/logging"
 )
 
 // Session represents a continuous development session containing multiple conversations
@@ -56,6 +57,8 @@ type SessionManager interface {
 type sessionManager struct {
 	config                  *config.Config
 	db                      *sql.DB             // SQLite database connection
+	storage                 ConversationStorage // Storage service for conversations
+	logger                  logging.Logger      // Logger for structured logging
 	sessions                map[string]*Session // All sessions keyed by session ID
 	activeSessionsByProject map[string]string   // Active sessions keyed by project name
 	mu                      sync.RWMutex        // Mutex for thread-safe access
@@ -82,9 +85,26 @@ func NewSessionManager(cfg *config.Config, database *sql.DB) (SessionManager, er
 		return nil, fmt.Errorf("database cannot be nil")
 	}
 
+	// Create storage service
+	storage, err := NewConversationStorage(database)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create conversation storage: %w", err)
+	}
+
+	// Create logger (use component-specific logger)
+	logger, err := logging.NewLogger(cfg)
+	if err != nil {
+		// If logger creation fails, use no-op logger (don't fail session manager creation)
+		// This allows the system to work even if logging is misconfigured
+		logger = logging.NewNoopLogger()
+	}
+	logger = logger.With("component", "session_manager")
+
 	sm := &sessionManager{
 		config:                  cfg,
 		db:                      database,
+		storage:                 storage,
+		logger:                  logger,
 		sessions:                make(map[string]*Session),
 		activeSessionsByProject: make(map[string]string),
 	}
@@ -126,6 +146,19 @@ func (sm *sessionManager) GetOrCreateSession(project string, conversation *Conve
 				}
 				session.Conversations = append(session.Conversations, conversation)
 				session.UpdatedAt = time.Now()
+
+				// Save session to database first (so conversation storage can verify it exists)
+				if err := sm.saveSessionToDB(session); err != nil {
+					// Log error but don't fail - session is still valid in memory
+					sm.logger.Error("failed to save session to database", "error", err, "session_id", sessionID)
+				}
+
+				// Store conversation in database
+				if err := sm.storage.StoreConversation(conversation, sessionID); err != nil {
+					// Log error but don't fail - session is still valid in memory
+					sm.logger.Error("failed to store conversation", "error", err, "session_id", sessionID, "composer_id", conversation.ComposerID)
+				}
+
 				return session, nil
 			}
 			// Session expired, end it
@@ -155,6 +188,20 @@ func (sm *sessionManager) GetOrCreateSession(project string, conversation *Conve
 
 	sm.sessions[sessionID] = session
 	sm.activeSessionsByProject[project] = sessionID
+
+	// Save session to database first (so conversation storage can verify it exists)
+	if err := sm.saveSessionToDB(session); err != nil {
+		// Log error but don't fail - session is still valid in memory
+		sm.logger.Error("failed to save session to database", "error", err, "session_id", sessionID)
+	}
+
+	// Store conversation in database
+	if err := sm.storage.StoreConversation(conversation, sessionID); err != nil {
+		// Log error but don't fail - session is still valid in memory
+		sm.logger.Error("failed to store conversation", "error", err, "session_id", sessionID, "composer_id", conversation.ComposerID)
+	}
+
+	sm.logger.Info("created new session", "session_id", sessionID, "project", project)
 
 	return session, nil
 }
@@ -186,6 +233,21 @@ func (sm *sessionManager) AddConversation(sessionID string, conversation *Conver
 	}
 
 	session.UpdatedAt = time.Now()
+
+	// Save session to database first (so conversation storage can verify it exists)
+	if err := sm.saveSessionToDB(session); err != nil {
+		// Log error but don't fail - session is still valid in memory
+		sm.logger.Error("failed to save session to database", "error", err, "session_id", sessionID)
+	}
+
+	// Store conversation in database
+	if err := sm.storage.StoreConversation(conversation, sessionID); err != nil {
+		// Log error and return it
+		sm.logger.Error("failed to store conversation", "error", err, "session_id", sessionID, "composer_id", conversation.ComposerID)
+		return fmt.Errorf("failed to store conversation: %w", err)
+	}
+
+	sm.logger.Info("added conversation to session", "session_id", sessionID, "composer_id", conversation.ComposerID)
 
 	return nil
 }
@@ -284,15 +346,29 @@ func (sm *sessionManager) LoadSessions() error {
 			session.EndTime = &endTime.Time
 		}
 
-		// Parse conversations JSON
-		if conversationsJSON.Valid && conversationsJSON.String != "" {
-			if err := json.Unmarshal([]byte(conversationsJSON.String), &session.Conversations); err != nil {
-				// Log error but continue with empty conversations
-				session.Conversations = []*Conversation{}
-			}
-		} else {
-			session.Conversations = []*Conversation{}
+		// Load conversations from normalized storage
+		conversations, err := sm.storage.GetConversationsBySession(session.ID)
+		if err != nil {
+			conversations = []*Conversation{} // Initialize empty slice on error
 		}
+
+		// If no conversations found in normalized storage but JSON exists, migrate from JSON
+		if len(conversations) == 0 && conversationsJSON.Valid && conversationsJSON.String != "" {
+			var jsonConversations []*Conversation
+			if err := json.Unmarshal([]byte(conversationsJSON.String), &jsonConversations); err == nil && len(jsonConversations) > 0 {
+				// Migrate JSON conversations to normalized storage
+				// First ensure session exists in DB (it should, but be safe)
+				if err := sm.saveSessionToDB(&session); err == nil {
+					for _, conv := range jsonConversations {
+						if err := sm.storage.StoreConversation(conv, session.ID); err == nil {
+							conversations = append(conversations, conv)
+						}
+					}
+				}
+			}
+		}
+
+		session.Conversations = conversations
 
 		sm.sessions[session.ID] = &session
 		if session.IsActive() {
@@ -302,6 +378,40 @@ func (sm *sessionManager) LoadSessions() error {
 
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("error iterating sessions: %w", err)
+	}
+
+	return nil
+}
+
+// saveSessionToDB saves a single session to the database (without locking)
+func (sm *sessionManager) saveSessionToDB(session *Session) error {
+	var endTime interface{}
+	if session.EndTime != nil {
+		endTime = session.EndTime
+	}
+
+	_, err := sm.db.Exec(`
+		INSERT INTO sessions (id, project, start_time, end_time, last_activity, conversations_json, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			project = excluded.project,
+			start_time = excluded.start_time,
+			end_time = excluded.end_time,
+			last_activity = excluded.last_activity,
+			conversations_json = NULL,
+			updated_at = excluded.updated_at
+	`,
+		session.ID,
+		session.Project,
+		session.StartTime,
+		endTime,
+		session.LastActivity,
+		nil, // conversations_json is NULL - conversations stored in normalized tables
+		session.CreatedAt,
+		session.UpdatedAt,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to save session %s: %w", session.ID, err)
 	}
 
 	return nil
@@ -319,7 +429,7 @@ func (sm *sessionManager) SaveSessions() error {
 	}
 	defer tx.Rollback()
 
-	// Upsert each session
+	// Upsert each session (conversations are stored separately in normalized tables)
 	stmt, err := tx.Prepare(`
 		INSERT INTO sessions (id, project, start_time, end_time, last_activity, conversations_json, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -328,7 +438,7 @@ func (sm *sessionManager) SaveSessions() error {
 			start_time = excluded.start_time,
 			end_time = excluded.end_time,
 			last_activity = excluded.last_activity,
-			conversations_json = excluded.conversations_json,
+			conversations_json = NULL,
 			updated_at = excluded.updated_at
 	`)
 	if err != nil {
@@ -337,24 +447,19 @@ func (sm *sessionManager) SaveSessions() error {
 	defer stmt.Close()
 
 	for _, session := range sm.sessions {
-		// Marshal conversations to JSON
-		conversationsJSON, err := json.Marshal(session.Conversations)
-		if err != nil {
-			continue // Skip sessions with invalid conversations
-		}
-
 		var endTime interface{}
 		if session.EndTime != nil {
 			endTime = session.EndTime
 		}
 
+		// conversations_json is set to NULL since conversations are stored in normalized tables
 		_, err = stmt.Exec(
 			session.ID,
 			session.Project,
 			session.StartTime,
 			endTime,
 			session.LastActivity,
-			string(conversationsJSON),
+			nil, // conversations_json is NULL - conversations stored in normalized tables
 			session.CreatedAt,
 			session.UpdatedAt,
 		)
