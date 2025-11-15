@@ -3,7 +3,6 @@ package cursor
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
@@ -575,71 +574,6 @@ func TestLoadSessions_NoFile(t *testing.T) {
 	err = sm.LoadSessions()
 	if err != nil {
 		t.Fatalf("LoadSessions should not error when file doesn't exist: %v", err)
-	}
-}
-
-func TestLoadSessions_MigrateFromJSON(t *testing.T) {
-	cfg := createTestConfig(t)
-	database1 := createTestDB(t, cfg)
-	defer database1.Close()
-
-	// Create a session with conversations stored as JSON (simulating old format)
-	sessionID := "test-session-migration"
-	now := time.Now()
-	conv1 := createTestConversation(t, "composer-migrate-1", now)
-	conv2 := createTestConversation(t, "composer-migrate-2", now.Add(5*time.Minute))
-
-	// Marshal conversations to JSON
-	conversationsJSON, err := json.Marshal([]*Conversation{conv1, conv2})
-	if err != nil {
-		t.Fatalf("Failed to marshal conversations: %v", err)
-	}
-
-	// Insert session with JSON conversations (old format)
-	_, err = database1.Exec(`
-		INSERT INTO sessions (id, project, start_time, end_time, last_activity, conversations_json, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, sessionID, "test-project", now, nil, now, string(conversationsJSON), now, now)
-	if err != nil {
-		t.Fatalf("Failed to insert session with JSON: %v", err)
-	}
-
-	// Close first database connection
-	database1.Close()
-
-	// Create new database connection and session manager (should migrate JSON to normalized tables)
-	database2 := createTestDB(t, cfg)
-	defer database2.Close()
-	sm, err := NewSessionManager(cfg, database2)
-	if err != nil {
-		t.Fatalf("Failed to create session manager: %v", err)
-	}
-
-	err = sm.LoadSessions()
-	if err != nil {
-		t.Fatalf("Failed to load sessions: %v", err)
-	}
-
-	// Verify session was loaded
-	session, err := sm.GetSession(sessionID)
-	if err != nil {
-		t.Fatalf("Failed to get session: %v", err)
-	}
-
-	// Verify conversations were migrated
-	if len(session.Conversations) != 2 {
-		t.Errorf("Expected 2 conversations after migration, got %d", len(session.Conversations))
-	}
-
-	// Verify conversations are now in normalized tables
-	storage, _ := NewConversationStorage(database2)
-	conversations, err := storage.GetConversationsBySession(sessionID)
-	if err != nil {
-		t.Fatalf("Failed to get conversations from storage: %v", err)
-	}
-
-	if len(conversations) != 2 {
-		t.Errorf("Expected 2 conversations in normalized storage, got %d", len(conversations))
 	}
 }
 

@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -350,22 +349,6 @@ func (sm *sessionManager) LoadSessions() error {
 		conversations, err := sm.storage.GetConversationsBySession(session.ID)
 		if err != nil {
 			conversations = []*Conversation{} // Initialize empty slice on error
-		}
-
-		// If no conversations found in normalized storage but JSON exists, migrate from JSON
-		if len(conversations) == 0 && conversationsJSON.Valid && conversationsJSON.String != "" {
-			var jsonConversations []*Conversation
-			if err := json.Unmarshal([]byte(conversationsJSON.String), &jsonConversations); err == nil && len(jsonConversations) > 0 {
-				// Migrate JSON conversations to normalized storage
-				// First ensure session exists in DB (it should, but be safe)
-				if err := sm.saveSessionToDB(&session); err == nil {
-					for _, conv := range jsonConversations {
-						if err := sm.storage.StoreConversation(conv, session.ID); err == nil {
-							conversations = append(conversations, conv)
-						}
-					}
-				}
-			}
 		}
 
 		session.Conversations = conversations
