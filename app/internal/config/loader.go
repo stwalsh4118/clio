@@ -111,7 +111,9 @@ func loadConfig() error {
 	return nil
 }
 
-// expandHomeDir expands ~ in a path to the user's home directory
+// expandHomeDir expands ~ in a path to the user's home directory.
+// It validates that the resulting path structure is within the home directory to prevent path traversal attacks.
+// Note: This doesn't validate that the path exists - that's done by ValidatePath.
 func expandHomeDir(path string) string {
 	if strings.HasPrefix(path, "~") {
 		homeDir, err := os.UserHomeDir()
@@ -123,10 +125,84 @@ func expandHomeDir(path string) string {
 			return homeDir
 		}
 		if strings.HasPrefix(path, "~/") {
-			return filepath.Join(homeDir, path[2:])
+			// Join the paths - filepath.Join will clean the path
+			expanded := filepath.Join(homeDir, path[2:])
+			
+			// Get absolute path to check for traversal
+			absExpanded, err := filepath.Abs(expanded)
+			if err != nil {
+				// If we can't get absolute, return as-is (will fail validation later)
+				return path
+			}
+			
+			absHome, err := filepath.Abs(homeDir)
+			if err != nil {
+				return path
+			}
+			
+			// Check if expanded path is within home directory using Rel
+			rel, err := filepath.Rel(absHome, absExpanded)
+			if err != nil {
+				return path
+			}
+			
+			// If relative path starts with "..", it's a path traversal attempt
+			if strings.HasPrefix(rel, "..") || rel == ".." {
+				// Path traversal detected - return original path to fail validation later
+				return path
+			}
+			
+			// Path is safe - try to resolve symlinks if path exists
+			// If it doesn't exist yet, that's okay - validation will catch it
+			resolved, err := filepath.EvalSymlinks(absExpanded)
+			if err == nil {
+				// Verify resolved path is still within home
+				if isPathWithinHome(resolved, absHome) {
+					return resolved
+				}
+				// Resolved path is outside home - return original to fail validation
+				return path
+			}
+			
+			// Path doesn't exist yet or symlink resolution failed - return cleaned path
+			// Validation will happen later in ValidatePath
+			return absExpanded
 		}
 	}
 	return path
+}
+
+// isPathWithinHome checks if a path is within the home directory.
+// It resolves symlinks and uses filepath.Rel to detect path traversal attempts.
+func isPathWithinHome(path, homeDir string) bool {
+	// Get absolute paths
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	absHome, err := filepath.Abs(homeDir)
+	if err != nil {
+		return false
+	}
+
+	// Resolve symlinks
+	resolvedPath, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		resolvedPath = absPath
+	}
+	resolvedHome, err := filepath.EvalSymlinks(absHome)
+	if err != nil {
+		resolvedHome = absHome
+	}
+
+	// Check if path is within home directory
+	rel, err := filepath.Rel(resolvedHome, resolvedPath)
+	if err != nil {
+		return false
+	}
+
+	// If relative path starts with "..", it's outside the home directory
+	return !strings.HasPrefix(rel, "..") && rel != ".."
 }
 
 // expandConfigPaths expands all ~ paths in the configuration struct
