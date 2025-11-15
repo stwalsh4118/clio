@@ -82,12 +82,19 @@ type Daemon struct {
     ctx    context.Context
     cancel context.CancelFunc
     done   chan struct{}
+    db     *sql.DB
+    config *config.Config
 }
 
 func NewDaemon() (*Daemon, error)
 func (d *Daemon) Run() error
 func (d *Daemon) Shutdown()
 ```
+
+**Database Initialization**:
+- Database is initialized automatically when daemon is created
+- Migrations are run automatically on daemon startup
+- Database connection is closed gracefully on shutdown
 
 **Features**:
 - PID file management at `~/.clio/clio.pid` with restrictive permissions (0600)
@@ -97,12 +104,50 @@ func (d *Daemon) Shutdown()
 - PID reuse attack detection
 - Stale PID file detection and cleanup
 
+### Database Management
+
+**Package**: `github.com/stwalsh4118/clio/internal/db`
+
+**Main Function**:
+```go
+func Open(cfg *config.Config) (*sql.DB, error)
+```
+Opens a SQLite database connection at the configured path, ensures the directory exists, runs migrations, and returns the database connection.
+
+**Migration Functions**:
+```go
+func RunMigrations(db *sql.DB) error
+```
+Runs all pending database migrations by reading SQL files from embed.FS and executing them directly.
+
+```go
+func RollbackMigrations(db *sql.DB, count int) (int, error)
+```
+Rolls back the specified number of migrations (default: 1). Returns the version after rollback. Requires `.down.sql` files for each migration.
+
+**Features**:
+- Automatic database initialization and migration on startup
+- Uses WAL mode for better concurrency
+- Migration files stored in `internal/db/migrations/` directory
+- Migrations embedded in binary using `embed.FS`
+- Works with any database/sql driver (pure Go, no CGO required)
+- Migrations are idempotent (safe to run multiple times)
+- Each migration runs in a transaction (all-or-nothing)
+- Tracks migration versions in `schema_migrations` table
+- Supports rollback via `RollbackMigrations()` function
+- Both `.up.sql` and `.down.sql` files are loaded and available
+
+**Usage Pattern**:
+1. Call `db.Open(cfg)` to get database connection
+2. Database is automatically migrated
+3. Pass database connection to components that need it (e.g., SessionManager)
+4. Close database connection on shutdown
+
 ## Planned Infrastructure (from PRD)
 
 The following infrastructure components are planned but not yet implemented:
 
 - Logging systems
-- Database connection pooling
 - HTTP middleware (if needed)
 - Error handling utilities
 

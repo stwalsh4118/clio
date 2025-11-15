@@ -242,6 +242,144 @@ type Message struct {
 - Supports querying all composers
 - Designed for integration with file watcher (task 2-3) and update handling (task 2-8)
 
+## Session Tracking
+
+**Package**: `github.com/stwalsh4118/clio/internal/cursor`
+
+### SessionManager Interface
+
+```go
+type SessionManager interface {
+    GetOrCreateSession(project string, conversation *Conversation) (*Session, error)
+    AddConversation(sessionID string, conversation *Conversation) error
+    EndSession(sessionID string) error
+    GetActiveSessions() ([]*Session, error)
+    GetSession(sessionID string) (*Session, error)
+    LoadSessions() error
+    SaveSessions() error
+    StartInactivityMonitor(ctx context.Context) error
+    Stop() error
+}
+```
+
+### Session Type
+
+```go
+type Session struct {
+    ID            string         // Unique session identifier
+    Project       string         // Project name
+    StartTime     time.Time      // When session started
+    EndTime       *time.Time     // When session ended (nil if active)
+    Conversations []*Conversation // Conversations in this session
+    LastActivity  time.Time      // Last conversation/message timestamp
+    CreatedAt     time.Time      // When session record was created
+    UpdatedAt     time.Time      // When session was last updated
+}
+```
+
+### Session Methods
+
+```go
+func (s *Session) IsActive() bool
+func (s *Session) Duration() time.Duration
+```
+
+### Usage Pattern
+
+1. Open database: `database, err := db.Open(cfg)` (database is automatically migrated)
+2. Create session manager: `sm, err := cursor.NewSessionManager(cfg, database)`
+3. Load existing sessions: `sm.LoadSessions()`
+4. Start inactivity monitor: `sm.StartInactivityMonitor(ctx)`
+5. Get or create session: `session, err := sm.GetOrCreateSession(project, conversation)`
+6. Add conversations: `sm.AddConversation(sessionID, conversation)`
+7. End session manually: `sm.EndSession(sessionID)`
+8. Stop and save: `sm.Stop()`
+
+### Session Boundary Detection
+
+**Session Start**:
+- New project detected (no active session for project)
+- Manual session creation
+
+**Session End**:
+- Inactivity timeout: Last activity > `InactivityTimeoutMinutes` ago
+- Project change: New conversation belongs to different project
+- Manual end: Explicit `EndSession()` call
+
+**Session Continuation**:
+- New conversation in same project within inactivity timeout
+- Conversation added to existing active session
+
+### Persistence
+
+**Storage Location**: SQLite database at `{storage.database_path}` (default: `~/.clio/clio.db`)
+
+**Database Schema**:
+```sql
+CREATE TABLE sessions (
+    id TEXT PRIMARY KEY,
+    project TEXT,
+    start_time TIMESTAMP NOT NULL,
+    end_time TIMESTAMP,
+    last_activity TIMESTAMP NOT NULL,
+    conversations_json TEXT,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL
+);
+
+CREATE INDEX idx_sessions_project ON sessions(project);
+CREATE INDEX idx_sessions_start_time ON sessions(start_time);
+CREATE INDEX idx_sessions_active ON sessions(end_time) WHERE end_time IS NULL;
+```
+
+**Storage Format**:
+- Session metadata stored in `sessions` table
+- Conversations stored as JSON in `conversations_json` column (temporary until PBI-4 implements conversations table)
+- Save on: session creation, conversation addition, session end, shutdown
+- Load on: manager initialization
+- Uses WAL mode for better concurrency
+- Transactions ensure atomic updates
+
+**Database Migrations**:
+- Migration files stored in `internal/db/migrations/` directory
+- File naming: `{version}_{name}.up.sql` and `{version}_{name}.down.sql`
+- Migrations run automatically on database initialization (via `db.Open()`)
+- Migrations are idempotent (safe to run multiple times)
+- Each migration runs in a transaction (all-or-nothing)
+- To add new migrations: create `.up.sql` file in migrations directory with version prefix
+- Migrations are embedded in the binary using `embed.FS`
+- Works with pure Go SQLite driver (no CGO required)
+- Tracks migration versions in `schema_migrations` table
+
+### Inactivity Monitor
+
+Background goroutine that:
+- Runs every 1 minute
+- Checks all active sessions
+- Ends sessions where `time.Now().Sub(session.LastActivity) >= InactivityTimeoutMinutes`
+- Uses context for graceful shutdown
+
+### Configuration
+
+**Session Timeout**: Configured via `config.Session.InactivityTimeoutMinutes` (default: 30 minutes)
+
+**Database Path**: Configured via `config.Storage.DatabasePath` (default: `~/.clio/clio.db`)
+
+**Sessions Path**: Configured via `config.Storage.SessionsPath` (default: `~/.clio/sessions`) - Used for markdown export, not session persistence
+
+### Error Handling
+
+- **Nil conversation**: Returns error
+- **Nonexistent session**: Returns error for GetSession, AddConversation, EndSession
+- **Ended session**: Returns error when adding conversation to ended session
+- **File I/O errors**: Logged, continues operation
+- **Corrupted JSON**: Logged, starts fresh
+- **Concurrent access**: Protected with mutex
+
+### Thread Safety
+
+All SessionManager methods are thread-safe and protected with mutex locks.
+
 ## Notes
 
 - All conversation data stored in global `state.vscdb`
@@ -251,4 +389,6 @@ type Message struct {
 - User must configure the Cursor log path in config - no automatic detection
 - File watcher detects changes but does not track state - state tracking happens in parser/updater tasks
 - Parser focuses on extraction only - session tracking and markdown export are separate tasks
+- Sessions are grouped by project - project detection (task 2-7) provides project name
+- Session manager persists state across application restarts
 
