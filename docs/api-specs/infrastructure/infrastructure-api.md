@@ -26,6 +26,7 @@ type Config struct {
     Storage           StorageConfig
     Cursor            CursorConfig
     Session           SessionConfig
+    Logging           LoggingConfig
 }
 ```
 
@@ -143,11 +144,91 @@ Rolls back the specified number of migrations (default: 1). Returns the version 
 3. Pass database connection to components that need it (e.g., SessionManager)
 4. Close database connection on shutdown
 
+### Logging System (Zerolog)
+
+**Package**: `github.com/stwalsh4118/clio/internal/logging`
+
+**Main Function**:
+```go
+func NewLogger(cfg *config.Config) (Logger, error)
+```
+Creates a new logger instance based on configuration. Supports file and console output, configurable log levels, and structured logging.
+
+**Logger Interface**:
+```go
+type Logger interface {
+    Debug(msg string, fields ...interface{})
+    Info(msg string, fields ...interface{})
+    Warn(msg string, fields ...interface{})
+    Error(msg string, fields ...interface{})
+    With(fields ...interface{}) Logger
+    WithContext(ctx context.Context) Logger
+}
+```
+
+**Configuration**:
+```go
+type LoggingConfig struct {
+    Level      string // "debug", "info", "warn", "error" (default: "info")
+    FilePath   string // Path to log file (default: ~/.clio/clio.log)
+    Console    bool   // Also log to console (default: false for daemon, true for CLI)
+    MaxSize    int    // Max log file size in MB before rotation (default: 10)
+    MaxBackups int    // Number of rotated log files to keep (default: 3)
+}
+```
+
+**Features**:
+- Structured JSON logging using zerolog (zero-allocation, high performance)
+- File-based logging for daemon processes (default: `~/.clio/clio.log`)
+- Console output support for CLI commands
+- Configurable log levels (debug, info, warn, error)
+- Secure log file permissions (0600 for files, 0700 for directories)
+- Automatic log directory creation
+- Component-specific logging via `With()` method
+- Context-aware logging via `WithContext()`
+
+**Usage Pattern**:
+```go
+// Create logger
+logger, err := logging.NewLogger(cfg)
+if err != nil {
+    return fmt.Errorf("failed to initialize logger: %w", err)
+}
+
+// Basic logging
+logger.Info("daemon started", "pid", os.Getpid())
+logger.Error("failed to store conversation", "error", err, "session_id", sessionID)
+
+// Component-specific logger
+componentLogger := logger.With("component", "storage")
+componentLogger.Debug("storing conversation", "composer_id", composerID)
+
+// Context-aware logging
+ctxLogger := logger.WithContext(ctx)
+ctxLogger.Info("processing request")
+```
+
+**Log Format**:
+- JSON format for structured logging
+- Includes timestamp, level, message, and custom fields
+- Example: `{"level":"info","time":"2025-01-27T10:30:00Z","component":"session_manager","message":"created new session","session_id":"abc-123","project":"my-project"}`
+
+**Log Levels**:
+- **Debug**: Detailed operation flow, file paths, parsing details (development only)
+- **Info**: Important events (daemon start/stop, session creation, major operations)
+- **Warn**: Recoverable issues (skipped files, format variations, retries)
+- **Error**: Failures that need attention (database errors, file I/O failures)
+
+**Default Behavior**:
+- Daemon mode: File logging only (no console)
+- CLI commands: Console + file logging (for immediate feedback)
+- Log file: `~/.clio/clio.log` with 0600 permissions
+- Log level: `info` (can be overridden via config)
+
 ## Planned Infrastructure (from PRD)
 
 The following infrastructure components are planned but not yet implemented:
 
-- Logging systems
 - HTTP middleware (if needed)
 - Error handling utilities
 

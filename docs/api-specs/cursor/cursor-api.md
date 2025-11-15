@@ -327,18 +327,53 @@ CREATE TABLE sessions (
     updated_at TIMESTAMP NOT NULL
 );
 
+CREATE TABLE conversations (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    composer_id TEXT NOT NULL,
+    name TEXT,
+    status TEXT,
+    message_count INTEGER NOT NULL DEFAULT 0,
+    first_message_time TIMESTAMP,
+    last_message_time TIMESTAMP,
+    created_at TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
+CREATE TABLE messages (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    bubble_id TEXT NOT NULL,
+    type INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT NOT NULL,
+    created_at TIMESTAMP NOT NULL,
+    metadata TEXT,
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+);
+
 CREATE INDEX idx_sessions_project ON sessions(project);
 CREATE INDEX idx_sessions_start_time ON sessions(start_time);
 CREATE INDEX idx_sessions_active ON sessions(end_time) WHERE end_time IS NULL;
+CREATE INDEX idx_conversations_session_id ON conversations(session_id);
+CREATE INDEX idx_conversations_composer_id ON conversations(composer_id);
+CREATE INDEX idx_conversations_created_at ON conversations(created_at);
+CREATE INDEX idx_messages_conversation_id ON messages(conversation_id);
+CREATE INDEX idx_messages_created_at ON messages(created_at);
+CREATE INDEX idx_messages_type ON messages(type);
 ```
 
 **Storage Format**:
 - Session metadata stored in `sessions` table
-- Conversations stored as JSON in `conversations_json` column (temporary until PBI-4 implements conversations table)
+- Conversations stored in normalized `conversations` table (replaces JSON storage)
+- Messages stored in normalized `messages` table
+- `conversations_json` column kept for backward compatibility but set to NULL
 - Save on: session creation, conversation addition, session end, shutdown
-- Load on: manager initialization
+- Load on: manager initialization (migrates JSON conversations to normalized tables if found)
 - Uses WAL mode for better concurrency
 - Transactions ensure atomic updates
+- Foreign keys ensure referential integrity
 
 **Database Migrations**:
 - Migration files stored in `internal/db/migrations/` directory
@@ -379,6 +414,67 @@ Background goroutine that:
 ### Thread Safety
 
 All SessionManager methods are thread-safe and protected with mutex locks.
+
+## Conversation Storage
+
+**Package**: `github.com/stwalsh4118/clio/internal/cursor`
+
+### ConversationStorage Interface
+
+```go
+type ConversationStorage interface {
+    StoreConversation(conversation *Conversation, sessionID string) error
+    StoreMessage(message *Message, conversationID string) error
+    UpdateConversation(conversationID string, newMessages []*Message) error
+    GetConversation(conversationID string) (*Conversation, error)
+    GetConversationByComposerID(composerID string) (*Conversation, error)
+    GetConversationsBySession(sessionID string) ([]*Conversation, error)
+}
+```
+
+### Usage Pattern
+
+1. Create storage: `storage, err := cursor.NewConversationStorage(database)`
+2. Store conversation: `storage.StoreConversation(conversation, sessionID)`
+3. Store message: `storage.StoreMessage(message, conversationID)`
+4. Update conversation: `storage.UpdateConversation(conversationID, newMessages)`
+5. Retrieve conversation: `conv, err := storage.GetConversationByComposerID(composerID)`
+6. Retrieve by session: `conversations, err := storage.GetConversationsBySession(sessionID)`
+
+### Storage Details
+
+**Conversation ID**: Uses `composer_id` as the conversation ID (matches Cursor's identifier)
+
+**Message ID**: Uses `bubble_id` as the message ID (matches Cursor's identifier)
+
+**Transaction Handling**: 
+- `StoreConversation` wraps conversation + all messages in a single transaction
+- `UpdateConversation` wraps all new messages in a single transaction
+- Ensures atomicity and referential integrity
+
+**Referential Integrity**:
+- Conversations require valid session (checked before storage)
+- Messages require valid conversation (enforced by foreign key)
+- Foreign keys use `ON DELETE CASCADE` for cleanup
+
+**Message Ordering**: Messages are ordered by `created_at` timestamp when retrieved
+
+**Metadata Storage**: Message metadata stored as JSON in `metadata` column
+
+### Error Handling
+
+- **Nil conversation/message**: Returns error
+- **Nonexistent session**: Returns error when storing conversation
+- **Nonexistent conversation**: Returns error when storing/updating messages
+- **Database errors**: Returns wrapped errors with context
+- **Transaction rollback**: Automatic on error
+
+### Integration with SessionManager
+
+- SessionManager automatically uses ConversationStorage for all conversation persistence
+- Conversations are stored immediately when added to sessions
+- LoadSessions migrates existing JSON conversations to normalized tables
+- `conversations_json` column is kept for backward compatibility but set to NULL
 
 ## Notes
 
