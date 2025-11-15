@@ -30,7 +30,7 @@ func OpenCursorDatabase(cfg *config.Config) (*sql.DB, error) {
 
 	// Track connection creation for diagnostics
 	connNum := atomic.AddInt64(&connectionCounter, 1)
-	
+
 	// Get caller information for diagnostics
 	pc, file, line, ok := runtime.Caller(1)
 	caller := "unknown"

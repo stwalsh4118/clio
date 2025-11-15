@@ -92,35 +92,35 @@ func (p *parser) Close() error {
 func (p *parser) retryQueryWithBackoff(maxRetries int, fn func() error) error {
 	var lastErr error
 	baseDelay := 50 * time.Millisecond
-	
+
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		err := fn()
 		if err == nil {
 			return nil
 		}
-		
+
 		lastErr = err
-		
+
 		// Only retry on SQLITE_BUSY errors
 		if !IsSQLiteBusyError(err) {
 			return err
 		}
-		
+
 		// Log diagnostics on first retry attempt
 		if attempt == 0 {
 			LogSQLiteBusyDiagnostics(err, "parser", "query")
 		}
-		
+
 		// Calculate exponential backoff delay
 		delay := baseDelay * time.Duration(1<<uint(attempt))
 		if delay > 2*time.Second {
 			delay = 2 * time.Second
 		}
-		
+
 		p.logger.Debug("database busy, retrying query", "attempt", attempt+1, "max_retries", maxRetries, "delay_ms", delay.Milliseconds())
 		time.Sleep(delay)
 	}
-	
+
 	return fmt.Errorf("query failed after %d retries: %w", maxRetries, lastErr)
 }
 
