@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"time"
 
-	_ "modernc.org/sqlite" // SQLite driver
 	"github.com/stwalsh4118/clio/internal/config"
+	_ "modernc.org/sqlite" // SQLite driver
 )
 
 // ParserService defines the interface for parsing Cursor conversation data
@@ -167,10 +167,10 @@ func (p *parser) ParseAllConversations() ([]*Conversation, error) {
 
 // composerDataJSON represents the JSON structure of composerData entries
 type composerDataJSON struct {
-	ComposerID                 string `json:"composerId"`
-	Name                       string `json:"name"`
-	Status                     string `json:"status"`
-	CreatedAt                  int64  `json:"createdAt"` // Unix timestamp in milliseconds
+	ComposerID                  string `json:"composerId"`
+	Name                        string `json:"name"`
+	Status                      string `json:"status"`
+	CreatedAt                   int64  `json:"createdAt"` // Unix timestamp in milliseconds
 	FullConversationHeadersOnly []struct {
 		BubbleID string `json:"bubbleId"`
 		Type     int    `json:"type"`
@@ -259,7 +259,7 @@ func (p *parser) queryMessageBubbles(composerID string, headers []struct {
 			Role:      role,
 			Text:      bubbleData.Text,
 			CreatedAt: createdAt,
-			Metadata:   make(map[string]interface{}),
+			Metadata:  make(map[string]interface{}),
 		}
 
 		messages = append(messages, message)
@@ -303,4 +303,3 @@ func identifyRole(msgType int) string {
 		return "unknown"
 	}
 }
-

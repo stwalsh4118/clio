@@ -404,4 +404,3 @@ func TestWatcher_ConcurrentEvents(t *testing.T) {
 		}
 	}
 }
-

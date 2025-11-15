@@ -141,4 +141,3 @@ func handleSetBlogRepo(cfg *config.Config, path string) error {
 	fmt.Fprintf(os.Stdout, "Set blog repository to %s\n", path)
 	return nil
 }
-

@@ -146,31 +146,31 @@ func expandHomeDir(path string) string {
 		if strings.HasPrefix(path, "~/") {
 			// Join the paths - filepath.Join will clean the path
 			expanded := filepath.Join(homeDir, path[2:])
-			
+
 			// Get absolute path to check for traversal
 			absExpanded, err := filepath.Abs(expanded)
 			if err != nil {
 				// If we can't get absolute, return as-is (will fail validation later)
 				return path
 			}
-			
+
 			absHome, err := filepath.Abs(homeDir)
 			if err != nil {
 				return path
 			}
-			
+
 			// Check if expanded path is within home directory using Rel
 			rel, err := filepath.Rel(absHome, absExpanded)
 			if err != nil {
 				return path
 			}
-			
+
 			// If relative path starts with "..", it's a path traversal attempt
 			if strings.HasPrefix(rel, "..") || rel == ".." {
 				// Path traversal detected - return original path to fail validation later
 				return path
 			}
-			
+
 			// Path is safe - try to resolve symlinks if path exists
 			// If it doesn't exist yet, that's okay - validation will catch it
 			resolved, err := filepath.EvalSymlinks(absExpanded)
@@ -182,7 +182,7 @@ func expandHomeDir(path string) string {
 				// Resolved path is outside home - return original to fail validation
 				return path
 			}
-			
+
 			// Path doesn't exist yet or symlink resolution failed - return cleaned path
 			// Validation will happen later in ValidatePath
 			return absExpanded
@@ -242,4 +242,3 @@ func expandConfigPaths(cfg *Config) {
 		cfg.WatchedDirectories[i] = expandHomeDir(dir)
 	}
 }
-

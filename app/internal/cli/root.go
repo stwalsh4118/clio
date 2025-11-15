@@ -78,4 +78,3 @@ func newDaemonCmd() *cobra.Command {
 		},
 	}
 }
-

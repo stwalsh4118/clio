@@ -17,4 +17,3 @@ func SetupSignalHandlers(shutdown func()) {
 		shutdown()
 	}()
 }
-

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	_ "modernc.org/sqlite"
 	"github.com/stwalsh4118/clio/internal/config"
+	_ "modernc.org/sqlite"
 )
 
 // createTestDatabase creates a test SQLite database with sample conversation data
@@ -388,9 +388,9 @@ func TestParseUnixMilliseconds(t *testing.T) {
 
 func TestParseISO8601Timestamp(t *testing.T) {
 	tests := []struct {
-		input    string
-		wantErr  bool
-		checkFn  func(time.Time) bool
+		input   string
+		wantErr bool
+		checkFn func(time.Time) bool
 	}{
 		{"2024-01-01T12:00:00.000Z", false, func(t time.Time) bool {
 			return t.Year() == 2024 && t.Month() == 1 && t.Day() == 1
@@ -449,4 +449,3 @@ func TestParser_Close(t *testing.T) {
 		t.Errorf("Close() second call error = %v", err)
 	}
 }
-

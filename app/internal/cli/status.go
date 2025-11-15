@@ -38,4 +38,3 @@ func handleStatus() error {
 	fmt.Printf("Status: running (PID: %d)\n", pid)
 	return nil
 }
-

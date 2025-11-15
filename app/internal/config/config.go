@@ -4,9 +4,9 @@ package config
 type Config struct {
 	WatchedDirectories []string      `mapstructure:"watched_directories" yaml:"watched_directories"`
 	BlogRepository     string        `mapstructure:"blog_repository" yaml:"blog_repository"`
-	Storage           StorageConfig  `mapstructure:"storage" yaml:"storage"`
-	Cursor            CursorConfig   `mapstructure:"cursor" yaml:"cursor"`
-	Session           SessionConfig  `mapstructure:"session" yaml:"session"`
+	Storage            StorageConfig `mapstructure:"storage" yaml:"storage"`
+	Cursor             CursorConfig  `mapstructure:"cursor" yaml:"cursor"`
+	Session            SessionConfig `mapstructure:"session" yaml:"session"`
 }
 
 // StorageConfig contains storage-related configuration
@@ -25,4 +25,3 @@ type CursorConfig struct {
 type SessionConfig struct {
 	InactivityTimeoutMinutes int `mapstructure:"inactivity_timeout_minutes" yaml:"inactivity_timeout_minutes"`
 }
-

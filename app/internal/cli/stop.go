@@ -74,4 +74,3 @@ func handleStop() error {
 	fmt.Println("Daemon stopped successfully")
 	return nil
 }
-

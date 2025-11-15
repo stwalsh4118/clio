@@ -20,4 +20,3 @@ type Message struct {
 	CreatedAt time.Time              // When the message was created
 	Metadata  map[string]interface{} // Additional metadata for future extensibility
 }
-

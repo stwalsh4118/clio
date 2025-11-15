@@ -15,28 +15,28 @@ func resetViper() {
 
 func TestLoad_WithDefaults(t *testing.T) {
 	resetViper()
-	
+
 	// Create a temporary directory for the cursor log path since validation requires it to exist
 	tmpCursorDir, err := os.MkdirTemp("", "clio-test-cursor-*")
 	if err != nil {
 		t.Fatalf("Failed to create temporary directory: %v", err)
 	}
 	defer os.RemoveAll(tmpCursorDir)
-	
+
 	// Set environment variable for cursor log path
 	os.Setenv("CLIO_CURSOR_LOG_PATH", tmpCursorDir)
 	defer func() {
 		os.Unsetenv("CLIO_CURSOR_LOG_PATH")
 		resetViper()
 	}()
-	
+
 	// Backup and remove existing config file to test true defaults
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatalf("Failed to get home directory: %v", err)
 	}
 	configPath := filepath.Join(homeDir, configDirName, configFileName+"."+configFileType)
-	
+
 	var configBackupPath string
 	var configExists bool
 	if _, err := os.Stat(configPath); err == nil {
@@ -58,7 +58,7 @@ func TestLoad_WithDefaults(t *testing.T) {
 			os.Remove(configPath)
 		}()
 	}
-	
+
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() failed: %v", err)
@@ -112,14 +112,14 @@ func TestLoad_WithDefaults(t *testing.T) {
 
 func TestLoad_WithEnvironmentVariables(t *testing.T) {
 	resetViper()
-	
+
 	// Create a temporary directory for the blog repository since validation requires it to exist
 	tmpDir, err := os.MkdirTemp("", "clio-test-blog-repo-*")
 	if err != nil {
 		t.Fatalf("Failed to create temporary directory: %v", err)
 	}
 	defer os.RemoveAll(tmpDir)
-	
+
 	// Set environment variables
 	os.Setenv("CLIO_BLOG_REPOSITORY", tmpDir)
 	os.Setenv("CLIO_SESSION_INACTIVITY_TIMEOUT_MINUTES", "60")
@@ -138,7 +138,7 @@ func TestLoad_WithEnvironmentVariables(t *testing.T) {
 	// After path expansion and symlink resolution, the paths should match
 	resolvedTmpDir, _ := filepath.EvalSymlinks(tmpDir)
 	resolvedCfgPath, _ := filepath.EvalSymlinks(cfg.BlogRepository)
-	
+
 	if resolvedCfgPath != resolvedTmpDir && cfg.BlogRepository != tmpDir {
 		// Also check if the config path starts with the temp dir (in case of subdirectory)
 		if !strings.HasPrefix(cfg.BlogRepository, tmpDir) && !strings.HasPrefix(resolvedCfgPath, resolvedTmpDir) {
@@ -193,4 +193,3 @@ func TestExpandHomeDir(t *testing.T) {
 		})
 	}
 }
-
