@@ -34,6 +34,12 @@ type Config struct {
 func Save(cfg *Config) error
 func ValidatePath(path string) error
 func IsDuplicate(path string, paths []string) bool
+func ValidateConfig(cfg *Config) error
+func ValidateWatchedDirectories(dirs []string) error
+func ValidateBlogRepository(path string) error
+func ValidateStoragePaths(storage StorageConfig) error
+func ValidateCursorPath(path string) error
+func ValidateSessionConfig(session SessionConfig) error
 ```
 
 **Features**:
@@ -44,6 +50,10 @@ func IsDuplicate(path string, paths []string) bool
 - Save configuration to file with path normalization
 - Path validation with security checks (prevents traversal, validates symlinks)
 - Duplicate detection for watched directories
+- Comprehensive configuration validation (paths, values, permissions)
+- Security: Watched directories restricted to home directory
+- Security: Sensitive system directories blocked from watching
+- Validation integrated into loader, CLI commands, and daemon start
 
 ### Daemon Process Management
 
@@ -91,7 +101,6 @@ The following infrastructure components are planned but not yet implemented:
 - Database connection pooling
 - HTTP middleware (if needed)
 - Error handling utilities
-- Common validation functions
 
 ## Rules
 
