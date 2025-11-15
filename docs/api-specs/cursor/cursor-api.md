@@ -32,7 +32,19 @@ SQLite 3.x database with key-value storage:
 func OpenCursorDatabase(cfg *config.Config) (*sql.DB, error)
 ```
 
-Opens the Cursor global `state.vscdb` database in read-only mode (`?mode=ro`) to avoid locking issues. This shared helper function is used by parser, updater, and other components that need to access Cursor's conversation database.
+Opens the Cursor global `state.vscdb` database in read-only mode (`?mode=ro&_busy_timeout=5000`) to avoid locking issues. Configures connection pool with `MaxOpenConns(1)` to serialize access. This shared helper function is used by parser, updater, and other components that need to access Cursor's conversation database.
+
+**Connection Settings**:
+- Read-only mode: `?mode=ro`
+- Busy timeout: 5 seconds (5000ms) - SQLite will retry when locked
+- Max open connections: 1 (serializes access to prevent SQLITE_BUSY errors)
+- Max idle connections: 1
+
+**Helper Functions**:
+```go
+func IsSQLiteBusyError(err error) bool
+```
+Checks if an error is a SQLite busy/locked error.
 
 **Usage**:
 ```go
@@ -240,7 +252,9 @@ type Message struct {
 
 ### Database Access
 
-- Opens database in read-only mode (`?mode=ro`) to avoid locking issues with Cursor
+- Opens database in read-only mode (`?mode=ro&_busy_timeout=5000`) via `OpenCursorDatabase()`
+- Uses connection pool with `MaxOpenConns(1)` to serialize access
+- All queries include retry logic with exponential backoff (5 retries) for SQLITE_BUSY errors
 - Constructs path: `{cursor.log_path}/globalStorage/state.vscdb`
 - Queries `cursorDiskKV` table for composer data and message bubbles
 - Parses JSON-encoded BLOB values
@@ -270,7 +284,8 @@ type Message struct {
 
 ### Error Handling
 
-- **Database locked**: Returns error with clear message, logs error
+- **Database locked**: Retries with exponential backoff (50ms → 2s, max 5 retries), logs diagnostics on first retry
+- **SQLITE_BUSY errors**: Automatically retried with backoff, diagnostic logging includes stack trace
 - **Database open failures**: Returns wrapped error with context (database path), logs error
 - **Missing composer data**: Returns error with composer ID, logs warning
 - **Missing message bubbles**: Logs warning, skips bubble, continues parsing (allows partial conversation extraction)
@@ -735,7 +750,7 @@ CREATE TABLE processed_conversations (
 
 **Cursor Database Path**: Constructed from `config.Cursor.LogPath + "globalStorage/state.vscdb"`
 
-**Database Access**: Opens Cursor database in read-only mode (`?mode=ro`) to avoid locking issues
+**Database Access**: Opens Cursor database in read-only mode (`?mode=ro&_busy_timeout=5000`) via `OpenCursorDatabase()`. Queries include retry logic for SQLITE_BUSY errors.
 
 ## Error Handling and Logging Patterns
 
