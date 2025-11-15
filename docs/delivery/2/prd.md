@@ -22,21 +22,24 @@ Cursor AI conversations contain valuable insights about problem-solving approach
 
 ### Components
 
-**1. Cursor Log Discovery**
-- Locate Cursor log directory (`~/.cursor/` or platform-specific location)
-- Identify conversation log files
-- Detect new conversation files as they are created
+**1. Cursor Log Path Configuration**
+- User configures Cursor User directory path via `cursor.log_path` in config
+- Path points to directory containing `globalStorage/` and `workspaceStorage/` subdirectories
+- Example: `~/.config/Cursor/User/` (Linux) or `~/Library/Application Support/Cursor/User/` (macOS)
+- Path is validated to exist, be a directory, and be readable
 
 **2. File System Watcher**
-- Monitor Cursor log directory for new files
-- Watch for file modifications (conversation updates)
+- Monitor `{cursor.log_path}/globalStorage/state.vscdb` database file for modifications
+- Watch for file modifications (indicates new or updated conversations)
 - Handle file system events efficiently
 
 **3. Conversation Parser**
-- Parse Cursor's log format (JSON or other format - TBD during research)
-- Extract conversation messages
-- Identify user messages vs agent responses
-- Extract metadata: timestamps, session IDs, project context
+- Query SQLite database: `{cursor.log_path}/globalStorage/state.vscdb`
+- Extract conversation messages from `cursorDiskKV` table
+- Query composer data: `composerData:{composerId}`
+- Query message bubbles: `bubbleId:{composerId}:{bubbleId}`
+- Identify user messages (type=1) vs agent responses (type=2)
+- Extract metadata: timestamps, composer IDs, conversation status
 
 **4. Session Tracking**
 - Group related conversations into sessions
@@ -75,15 +78,17 @@ To debug websocket connection issues, you can...
 ### Data Flow
 
 ```
-Cursor Log Directory
+{cursor.log_path}/globalStorage/state.vscdb (SQLite Database)
     ↓
-File System Watcher (fsnotify)
+File System Watcher (fsnotify) detects modification
     ↓
-New/Modified File Detected
+Parser Queries Database for Updated Composer IDs
     ↓
-Parser Extracts Conversation
+Parser Extracts Conversation Messages
     ↓
-Session Tracker Groups Messages
+Project Detector Maps Composer ID → Project (via workspaceStorage)
+    ↓
+Session Tracker Groups Messages by Project & Time
     ↓
 Markdown Exporter Writes Files
     ↓
