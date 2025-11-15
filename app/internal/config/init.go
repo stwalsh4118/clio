@@ -223,6 +223,13 @@ func CreateDefaultConfig() error {
 		Session: SessionConfig{
 			InactivityTimeoutMinutes: 30,
 		},
+		Logging: LoggingConfig{
+			Level:      "info",
+			FilePath:   "~/" + configDirName + "/clio.log",
+			Console:    false, // Default to false (daemon mode), CLI commands can override
+			MaxSize:    10,    // 10 MB
+			MaxBackups: 3,     // Keep 3 rotated files
+		},
 	}
 
 	// Ensure storage base path directory exists (we created ~/.clio/ but validation

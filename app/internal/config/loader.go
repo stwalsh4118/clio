@@ -121,6 +121,13 @@ func setDefaults() {
 
 	// Session configuration
 	viper.SetDefault("session.inactivity_timeout_minutes", 30)
+
+	// Logging configuration
+	viper.SetDefault("logging.level", "info")
+	viper.SetDefault("logging.file_path", filepath.Join(homeDir, configDirName, "clio.log"))
+	viper.SetDefault("logging.console", false) // Default to false (daemon mode), CLI commands can override
+	viper.SetDefault("logging.max_size", 10)   // 10 MB
+	viper.SetDefault("logging.max_backups", 3)  // Keep 3 rotated files
 }
 
 // loadConfig performs any additional loading logic after Viper is initialized
@@ -236,6 +243,9 @@ func expandConfigPaths(cfg *Config) {
 
 	// Expand cursor log path
 	cfg.Cursor.LogPath = expandHomeDir(cfg.Cursor.LogPath)
+
+	// Expand logging file path
+	cfg.Logging.FilePath = expandHomeDir(cfg.Logging.FilePath)
 
 	// Expand watched directories paths
 	for i, dir := range cfg.WatchedDirectories {

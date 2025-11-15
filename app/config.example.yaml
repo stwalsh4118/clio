@@ -31,3 +31,16 @@ session:
   # Minutes of inactivity before a session is considered ended
   inactivity_timeout_minutes: 30
 
+# Logging configuration
+logging:
+  # Log level: "debug", "info", "warn", "error" (default: "info")
+  level: info
+  # Path to log file (default: ~/.clio/clio.log)
+  file_path: ~/.clio/clio.log
+  # Also log to console (default: false for daemon, true for CLI commands)
+  console: false
+  # Max log file size in MB before rotation (default: 10)
+  max_size: 10
+  # Number of rotated log files to keep (default: 3)
+  max_backups: 3
+
