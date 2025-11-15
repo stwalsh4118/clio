@@ -2,9 +2,13 @@ package daemon
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"os"
 	"time"
+
+	"github.com/stwalsh4118/clio/internal/config"
+	"github.com/stwalsh4118/clio/internal/db"
 )
 
 const (
@@ -16,16 +20,34 @@ type Daemon struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	done   chan struct{}
+	db     *sql.DB
+	config *config.Config
 }
 
 // NewDaemon creates a new daemon instance.
 func NewDaemon() (*Daemon, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// Load configuration
+	cfg, err := config.Load()
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	// Initialize database
+	database, err := db.Open(cfg)
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to initialize database: %w", err)
+	}
+
 	return &Daemon{
 		ctx:    ctx,
 		cancel: cancel,
 		done:   make(chan struct{}),
+		db:     database,
+		config: cfg,
 	}, nil
 }
 
@@ -70,8 +92,18 @@ func (d *Daemon) Shutdown() {
 	case <-d.done:
 		// Shutdown completed
 	case <-time.After(shutdownTimeout):
-		// Timeout - force exit
+		// Timeout - perform cleanup before force exit
+		// Note: os.Exit terminates immediately, so cleanup must happen before it
+		if d.db != nil {
+			_ = d.db.Close()
+		}
+		_ = RemovePIDFile()
 		os.Exit(1)
+	}
+
+	// Close database connection
+	if d.db != nil {
+		_ = d.db.Close()
 	}
 
 	// Remove PID file
