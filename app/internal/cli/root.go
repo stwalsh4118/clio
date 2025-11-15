@@ -1,8 +1,6 @@
 package cli
 
 import (
-	"fmt"
-
 	"github.com/spf13/cobra"
 )
 
@@ -28,42 +26,55 @@ queryable format for analysis and blog content generation.`,
 	rootCmd.AddCommand(newStopCmd())
 	rootCmd.AddCommand(newStatusCmd())
 	rootCmd.AddCommand(newConfigCmd())
+	rootCmd.AddCommand(newDaemonCmd())
 
 	return rootCmd
 }
 
-// newStartCmd creates the start command (placeholder for task 1-5)
+// newStartCmd creates the start command
 func newStartCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "start",
 		Short: "Start the monitoring daemon",
-		Long:  "Start the background monitoring daemon that captures development insights (not yet implemented)",
+		Long:  "Start the background monitoring daemon that captures development insights",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("start command not yet implemented (task 1-5)")
+			return handleStart()
 		},
 	}
 }
 
-// newStopCmd creates the stop command (placeholder for task 1-5)
+// newStopCmd creates the stop command
 func newStopCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "stop",
 		Short: "Stop the monitoring daemon",
-		Long:  "Stop the background monitoring daemon (not yet implemented)",
+		Long:  "Stop the background monitoring daemon gracefully",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("stop command not yet implemented (task 1-5)")
+			return handleStop()
 		},
 	}
 }
 
-// newStatusCmd creates the status command (placeholder for task 1-5)
+// newStatusCmd creates the status command
 func newStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
 		Short: "Check daemon status",
-		Long:  "Check if the monitoring daemon is running (not yet implemented)",
+		Long:  "Check if the monitoring daemon is running",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("status command not yet implemented (task 1-5)")
+			return handleStatus()
+		},
+	}
+}
+
+// newDaemonCmd creates the daemon command (hidden, used internally)
+func newDaemonCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:    "daemon",
+		Hidden: true, // Hide from help/usage
+		Short:  "Run as daemon (internal use only)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return handleDaemon()
 		},
 	}
 }
