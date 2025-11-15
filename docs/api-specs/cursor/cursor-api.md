@@ -770,6 +770,148 @@ All Cursor capture components follow consistent error handling and logging patte
 - Partial results returned when full results unavailable
 - All failures logged for troubleshooting
 
+## Capture Service
+
+**Package**: `github.com/stwalsh4118/clio/internal/cursor`
+
+### CaptureService Interface
+
+```go
+type CaptureService interface {
+    Start() error
+    Stop() error
+}
+```
+
+### Usage Pattern
+
+1. Create capture service: `captureService, err := cursor.NewCaptureService(cfg, database)`
+2. Start service: `captureService.Start()`
+3. Service automatically processes file events and captures conversations
+4. Stop service: `captureService.Stop()`
+
+### Initialization
+
+**Function**:
+```go
+func NewCaptureService(cfg *config.Config, database *sql.DB) (CaptureService, error)
+```
+
+Creates a new capture service instance that orchestrates all Cursor capture components:
+- WatcherService: Monitors `state.vscdb` for file modifications
+- ParserService: Extracts conversations from Cursor database
+- ProjectDetector: Maps conversations to projects
+- SessionManager: Groups conversations into sessions
+- ConversationStorage: Persists conversations and messages
+- ConversationUpdater: Handles incremental conversation updates
+
+**Requirements**:
+- Config must have `Cursor.LogPath` configured (non-empty)
+- Database must be initialized and migrated
+- Returns error if Cursor log path is not configured (allows daemon to run without capture)
+
+### Initial Scan on Startup
+
+**Behavior**: When the capture service starts, it performs an initial scan of all existing conversations in the Cursor database to capture any that haven't been processed yet.
+
+**Process**:
+1. Queries all composer IDs from Cursor database using `ParserService.GetComposerIDs()`
+2. For each composer ID:
+   - Checks if already processed using `ConversationUpdater.GetProcessedMessageCount()`
+   - If not processed (or has fewer messages), processes it using `processComposer()`
+   - Skips conversations that are already fully processed
+3. Logs progress periodically (every 25 conversations)
+4. Logs completion statistics (total found, processed, skipped, failed, duration)
+
+**Benefits**:
+- **Backward Compatibility**: Captures conversations that existed before the daemon was installed/started
+- **Complete Coverage**: Ensures no conversations are missed on first run
+- **Automatic**: Happens automatically on startup - no manual intervention required
+
+**Error Handling**:
+- If initial scan fails, logs error but continues with normal operation (doesn't prevent startup)
+- Individual conversation failures are logged but don't stop the scan
+- Shutdown requests during scan are handled gracefully
+
+**Logging**:
+- **Info**: Initial scan started, initial scan completed (with statistics), progress updates
+- **Debug**: Skipping already-processed conversations, processing individual composers
+- **Warn**: Individual conversation processing failures
+
+### Event Processing Pipeline
+
+When a file system event is detected (after initial scan):
+
+1. **Detect Updates**: Uses `ConversationUpdater.DetectUpdatedComposers()` to identify updated composer IDs
+2. **Process Each Composer**:
+   - **New Conversation** (not in `processed_conversations` table):
+     - Parse conversation using `ParserService.ParseConversation()`
+     - Detect project using `ProjectDetector.DetectProject()`
+     - Get or create session using `SessionManager.GetOrCreateSession()`
+     - Conversation is automatically stored via SessionManager
+     - Mark as processed using `ConversationUpdater.MarkAsProcessed()`
+   - **Updated Conversation** (exists in `processed_conversations` with fewer messages):
+     - Process update using `ConversationUpdater.ProcessUpdate()`
+     - Handles incremental message parsing and storage
+     - Updates session metadata
+
+### Async Processing
+
+- Events are processed asynchronously in goroutines to avoid blocking the watcher
+- Multiple events can be processed concurrently
+- Errors in individual conversation processing don't stop the service
+
+### Error Handling
+
+**Graceful Degradation**:
+- Individual conversation processing failures are logged but don't stop the service
+- Component initialization failures are logged but don't prevent daemon startup
+- Missing Cursor log path: Returns error during initialization (daemon can continue without capture)
+- Database errors: Logged and continue with next conversation
+
+**Logging**:
+- **Component Tag**: `component=capture_service`
+- **Error**: Component failures, initialization failures
+- **Warn**: Missing cursor log path, component initialization warnings
+- **Info**: Service started, service stopped, components initialized, conversations processed
+- **Debug**: Event processing details, composer processing
+
+### Integration with Daemon
+
+The capture service is integrated into the daemon lifecycle:
+
+- **Daemon Creation**: Capture service is created in `daemon.NewDaemon()` after database initialization
+- **Daemon Start**: Capture service is started in `daemon.Run()` before main loop
+- **Daemon Shutdown**: Capture service is stopped in `daemon.Shutdown()` gracefully
+
+**Error Handling**:
+- If capture service fails to start, daemon logs error but continues running
+- Allows daemon to operate even if Cursor capture is unavailable
+
+### Shutdown Behavior
+
+**Stop Method**:
+- Cancels context to signal shutdown to all goroutines
+- Stops watcher service
+- Stops session manager (saves sessions to database)
+- Closes parser database connection
+- Waits for in-flight operations to complete (with 10 second timeout)
+
+**Graceful Shutdown**:
+- All pending database operations complete before shutdown
+- Sessions are saved to database
+- No data loss on shutdown
+
+### Configuration
+
+**Cursor Log Path**: Required via `config.Cursor.LogPath`
+- Must point to Cursor User directory containing `globalStorage/` and `workspaceStorage/`
+- If not configured, capture service initialization fails (daemon can still run)
+
+**Database**: Uses daemon's database connection (shared)
+- Database must be initialized and migrated before creating capture service
+- All conversations and sessions stored in same database
+
 ## Notes
 
 - All conversation data stored in global `state.vscdb`
@@ -782,4 +924,5 @@ All Cursor capture components follow consistent error handling and logging patte
 - Sessions are grouped by project - project detection (task 2-7) provides project name
 - Session manager persists state across application restarts
 - All components include comprehensive error handling and logging for stable operation
+- Capture service orchestrates all components and integrates with daemon lifecycle
 
