@@ -44,6 +44,9 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
+	// Apply defaults for empty string values (Viper treats empty strings as set values)
+	applyDefaultsForEmptyValues(&cfg)
+
 	// Expand home directory paths in the loaded config
 	expandConfigPaths(&cfg)
 
@@ -127,7 +130,7 @@ func setDefaults() {
 	viper.SetDefault("logging.file_path", filepath.Join(homeDir, configDirName, "clio.log"))
 	viper.SetDefault("logging.console", false) // Default to false (daemon mode), CLI commands can override
 	viper.SetDefault("logging.max_size", 10)   // 10 MB
-	viper.SetDefault("logging.max_backups", 3)  // Keep 3 rotated files
+	viper.SetDefault("logging.max_backups", 3) // Keep 3 rotated files
 }
 
 // loadConfig performs any additional loading logic after Viper is initialized
@@ -229,6 +232,32 @@ func isPathWithinHome(path, homeDir string) bool {
 
 	// If relative path starts with "..", it's outside the home directory
 	return !strings.HasPrefix(rel, "..") && rel != ".."
+}
+
+// applyDefaultsForEmptyValues applies default values for empty string fields
+// This handles the case where the config file has empty strings, which Viper
+// treats as set values rather than missing values.
+func applyDefaultsForEmptyValues(cfg *Config) {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		// If we can't get home dir, skip defaults that require it
+		return
+	}
+
+	// Apply logging defaults if empty
+	if cfg.Logging.Level == "" {
+		cfg.Logging.Level = "info"
+	}
+	if cfg.Logging.FilePath == "" {
+		cfg.Logging.FilePath = filepath.Join(homeDir, configDirName, "clio.log")
+	}
+	if cfg.Logging.MaxSize == 0 {
+		cfg.Logging.MaxSize = 10
+	}
+	if cfg.Logging.MaxBackups == 0 {
+		cfg.Logging.MaxBackups = 3
+	}
+	// Console defaults to false, so we don't need to set it
 }
 
 // expandConfigPaths expands all ~ paths in the configuration struct
