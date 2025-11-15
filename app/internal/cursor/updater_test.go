@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/stwalsh4118/clio/internal/db"
+	"github.com/stwalsh4118/clio/internal/logging"
 	_ "modernc.org/sqlite"
 )
 
@@ -105,7 +106,8 @@ func TestNewConversationUpdater(t *testing.T) {
 	}
 	defer parser.Close()
 
-	storage, err := NewConversationStorage(database)
+	logger := logging.NewNoopLogger()
+	storage, err := NewConversationStorage(database, logger)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
@@ -168,7 +170,8 @@ func TestGetProcessedMessageCount(t *testing.T) {
 	}
 	defer parser.Close()
 
-	storage, err := NewConversationStorage(database)
+	logger := logging.NewNoopLogger()
+	storage, err := NewConversationStorage(database, logger)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
@@ -236,7 +239,8 @@ func TestHasBeenProcessed(t *testing.T) {
 	}
 	defer parser.Close()
 
-	storage, err := NewConversationStorage(database)
+	logger := logging.NewNoopLogger()
+	storage, err := NewConversationStorage(database, logger)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
@@ -305,7 +309,8 @@ func TestDetectUpdatedComposers(t *testing.T) {
 	}
 	defer parser.Close()
 
-	storage, err := NewConversationStorage(database)
+	logger := logging.NewNoopLogger()
+	storage, err := NewConversationStorage(database, logger)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
@@ -389,7 +394,8 @@ func TestProcessUpdate(t *testing.T) {
 	}
 	defer parser.Close()
 
-	storage, err := NewConversationStorage(database)
+	logger := logging.NewNoopLogger()
+	storage, err := NewConversationStorage(database, logger)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
@@ -483,7 +489,8 @@ func TestProcessUpdate_NewConversation(t *testing.T) {
 	}
 	defer parser.Close()
 
-	storage, err := NewConversationStorage(database)
+	logger := logging.NewNoopLogger()
+	storage, err := NewConversationStorage(database, logger)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
@@ -537,7 +544,8 @@ func TestProcessUpdate_NoNewMessages(t *testing.T) {
 	}
 	defer parser.Close()
 
-	storage, err := NewConversationStorage(database)
+	logger := logging.NewNoopLogger()
+	storage, err := NewConversationStorage(database, logger)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}

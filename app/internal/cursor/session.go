@@ -84,12 +84,6 @@ func NewSessionManager(cfg *config.Config, database *sql.DB) (SessionManager, er
 		return nil, fmt.Errorf("database cannot be nil")
 	}
 
-	// Create storage service
-	storage, err := NewConversationStorage(database)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create conversation storage: %w", err)
-	}
-
 	// Create logger (use component-specific logger)
 	logger, err := logging.NewLogger(cfg)
 	if err != nil {
@@ -97,6 +91,13 @@ func NewSessionManager(cfg *config.Config, database *sql.DB) (SessionManager, er
 		// This allows the system to work even if logging is misconfigured
 		logger = logging.NewNoopLogger()
 	}
+
+	// Create storage service with logger
+	storage, err := NewConversationStorage(database, logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create conversation storage: %w", err)
+	}
+
 	logger = logger.With("component", "session_manager")
 
 	sm := &sessionManager{

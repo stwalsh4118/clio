@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/stwalsh4118/clio/internal/db"
+	"github.com/stwalsh4118/clio/internal/logging"
 )
 
 // createTestConversation creates a test conversation with messages
@@ -45,7 +46,8 @@ func TestNewConversationStorage(t *testing.T) {
 	}
 	defer database.Close()
 
-	storage, err := NewConversationStorage(database)
+	logger := logging.NewNoopLogger()
+	storage, err := NewConversationStorage(database, logger)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
@@ -56,9 +58,24 @@ func TestNewConversationStorage(t *testing.T) {
 }
 
 func TestNewConversationStorage_NilDatabase(t *testing.T) {
-	_, err := NewConversationStorage(nil)
+	logger := logging.NewNoopLogger()
+	_, err := NewConversationStorage(nil, logger)
 	if err == nil {
 		t.Fatal("Expected error for nil database")
+	}
+}
+
+func TestNewConversationStorage_NilLogger(t *testing.T) {
+	cfg := createTestConfig(t)
+	database, err := db.Open(cfg)
+	if err != nil {
+		t.Fatalf("Failed to open database: %v", err)
+	}
+	defer database.Close()
+
+	_, err = NewConversationStorage(database, nil)
+	if err == nil {
+		t.Fatal("Expected error for nil logger")
 	}
 }
 
@@ -80,7 +97,8 @@ func TestStoreConversation(t *testing.T) {
 		t.Fatalf("Failed to create test session: %v", err)
 	}
 
-	storage, err := NewConversationStorage(database)
+	logger := logging.NewNoopLogger()
+	storage, err := NewConversationStorage(database, logger)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
@@ -116,7 +134,8 @@ func TestStoreConversation_InvalidSession(t *testing.T) {
 	}
 	defer database.Close()
 
-	storage, err := NewConversationStorage(database)
+	logger := logging.NewNoopLogger()
+	storage, err := NewConversationStorage(database, logger)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
@@ -146,7 +165,8 @@ func TestStoreConversation_TransactionRollback(t *testing.T) {
 		t.Fatalf("Failed to create test session: %v", err)
 	}
 
-	storage, err := NewConversationStorage(database)
+	logger := logging.NewNoopLogger()
+	storage, err := NewConversationStorage(database, logger)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
@@ -180,7 +200,8 @@ func TestStoreMessage(t *testing.T) {
 		t.Fatalf("Failed to create test session: %v", err)
 	}
 
-	storage, err := NewConversationStorage(database)
+	logger := logging.NewNoopLogger()
+	storage, err := NewConversationStorage(database, logger)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
@@ -225,7 +246,8 @@ func TestStoreMessage_InvalidConversation(t *testing.T) {
 	}
 	defer database.Close()
 
-	storage, err := NewConversationStorage(database)
+	logger := logging.NewNoopLogger()
+	storage, err := NewConversationStorage(database, logger)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
@@ -263,7 +285,8 @@ func TestUpdateConversation(t *testing.T) {
 		t.Fatalf("Failed to create test session: %v", err)
 	}
 
-	storage, err := NewConversationStorage(database)
+	logger := logging.NewNoopLogger()
+	storage, err := NewConversationStorage(database, logger)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
@@ -328,7 +351,8 @@ func TestGetConversationByComposerID(t *testing.T) {
 		t.Fatalf("Failed to create test session: %v", err)
 	}
 
-	storage, err := NewConversationStorage(database)
+	logger := logging.NewNoopLogger()
+	storage, err := NewConversationStorage(database, logger)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
@@ -368,7 +392,8 @@ func TestGetConversationByComposerID_NotFound(t *testing.T) {
 	}
 	defer database.Close()
 
-	storage, err := NewConversationStorage(database)
+	logger := logging.NewNoopLogger()
+	storage, err := NewConversationStorage(database, logger)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
@@ -397,7 +422,8 @@ func TestGetConversationsBySession(t *testing.T) {
 		t.Fatalf("Failed to create test session: %v", err)
 	}
 
-	storage, err := NewConversationStorage(database)
+	logger := logging.NewNoopLogger()
+	storage, err := NewConversationStorage(database, logger)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
@@ -450,7 +476,8 @@ func TestGetConversationsBySession_Empty(t *testing.T) {
 		t.Fatalf("Failed to create test session: %v", err)
 	}
 
-	storage, err := NewConversationStorage(database)
+	logger := logging.NewNoopLogger()
+	storage, err := NewConversationStorage(database, logger)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
@@ -483,7 +510,8 @@ func TestStoreConversation_MessageOrdering(t *testing.T) {
 		t.Fatalf("Failed to create test session: %v", err)
 	}
 
-	storage, err := NewConversationStorage(database)
+	logger := logging.NewNoopLogger()
+	storage, err := NewConversationStorage(database, logger)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
@@ -568,7 +596,8 @@ func TestStoreConversation_Metadata(t *testing.T) {
 		t.Fatalf("Failed to create test session: %v", err)
 	}
 
-	storage, err := NewConversationStorage(database)
+	logger := logging.NewNoopLogger()
+	storage, err := NewConversationStorage(database, logger)
 	if err != nil {
 		t.Fatalf("Failed to create storage: %v", err)
 	}
