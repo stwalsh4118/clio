@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/stwalsh4118/clio/internal/config"
+	"github.com/stwalsh4118/clio/internal/cursor"
 	"github.com/stwalsh4118/clio/internal/db"
 	"github.com/stwalsh4118/clio/internal/logging"
 )
@@ -18,12 +19,13 @@ const (
 
 // Daemon represents the main daemon process structure.
 type Daemon struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	done   chan struct{}
-	db     *sql.DB
-	config *config.Config
-	logger logging.Logger
+	ctx            context.Context
+	cancel         context.CancelFunc
+	done           chan struct{}
+	db             *sql.DB
+	config         *config.Config
+	logger         logging.Logger
+	captureService cursor.CaptureService
 }
 
 // NewDaemon creates a new daemon instance.
@@ -52,13 +54,22 @@ func NewDaemon() (*Daemon, error) {
 		return nil, fmt.Errorf("failed to initialize logger: %w", err)
 	}
 
+	// Create capture service (may fail if Cursor log path not configured - that's OK)
+	captureService, err := cursor.NewCaptureService(cfg, database)
+	if err != nil {
+		// Log warning but don't fail daemon creation - allows daemon to run without cursor capture
+		logger.Warn("failed to create capture service", "error", err)
+		captureService = nil
+	}
+
 	return &Daemon{
-		ctx:    ctx,
-		cancel: cancel,
-		done:   make(chan struct{}),
-		db:     database,
-		config: cfg,
-		logger: logger,
+		ctx:            ctx,
+		cancel:         cancel,
+		done:           make(chan struct{}),
+		db:             database,
+		config:         cfg,
+		logger:         logger,
+		captureService: captureService,
 	}, nil
 }
 
@@ -76,6 +87,16 @@ func (d *Daemon) Run() error {
 	}
 
 	d.logger.Info("daemon started", "pid", pid)
+
+	// Start capture service if available
+	if d.captureService != nil {
+		if err := d.captureService.Start(); err != nil {
+			// Log error but don't crash daemon - allows daemon to run without cursor capture
+			d.logger.Error("failed to start capture service", "error", err)
+		} else {
+			d.logger.Info("capture service started")
+		}
+	}
 
 	// Main daemon loop (placeholder)
 	// This will be replaced with actual monitoring logic in future tasks
@@ -98,6 +119,15 @@ func (d *Daemon) Run() error {
 // Shutdown gracefully shuts down the daemon.
 func (d *Daemon) Shutdown() {
 	d.logger.Info("daemon shutdown initiated")
+
+	// Stop capture service if available
+	if d.captureService != nil {
+		if err := d.captureService.Stop(); err != nil {
+			d.logger.Error("failed to stop capture service", "error", err)
+		} else {
+			d.logger.Info("capture service stopped")
+		}
+	}
 
 	// Cancel context to signal shutdown
 	d.cancel()
