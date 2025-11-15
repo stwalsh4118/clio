@@ -20,7 +20,6 @@ func Save(cfg *Config) error {
 	}
 
 	configDir := filepath.Join(homeDir, configDirName)
-	configPath := filepath.Join(configDir, configFileName+"."+configFileType)
 
 	// Resolve symlinks to prevent symlink attacks
 	resolvedConfigDir, err := filepath.EvalSymlinks(configDir)
@@ -50,7 +49,7 @@ func Save(cfg *Config) error {
 	}
 
 	// Use resolved path for config file
-	configPath = filepath.Join(resolvedConfigDir, configFileName+"."+configFileType)
+	configPath := filepath.Join(resolvedConfigDir, configFileName+"."+configFileType)
 
 	// Create a copy of config with paths converted to ~ format for readability
 	saveCfg := convertPathsToTilde(cfg, homeDir)
@@ -96,9 +95,15 @@ func convertPathsToTilde(cfg *Config, homeDir string) *Config {
 }
 
 // convertPathToTilde converts an absolute path to ~ format if it's within
-// the user's home directory, otherwise returns the path as-is
+// the user's home directory, otherwise returns the path as-is.
+// If the path already starts with ~, it's returned as-is.
 func convertPathToTilde(path, homeDir string) string {
 	if path == "" {
+		return path
+	}
+
+	// If path already starts with ~, return it as-is (it's already in ~ notation)
+	if strings.HasPrefix(path, "~") {
 		return path
 	}
 

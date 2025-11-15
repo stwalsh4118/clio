@@ -22,7 +22,13 @@ const (
 // 1. Environment variables (CLIO_ prefix)
 // 2. Configuration file (~/.clio/config.yaml)
 // 3. Default values
+// If the configuration file doesn't exist, it will be created automatically with default values.
 func Load() (*Config, error) {
+	// Ensure config file exists before loading (creates it with defaults if missing)
+	if err := EnsureConfigFile(); err != nil {
+		return nil, fmt.Errorf("failed to ensure config file: %w", err)
+	}
+
 	if err := initViper(); err != nil {
 		return nil, fmt.Errorf("failed to initialize viper: %w", err)
 	}
@@ -40,6 +46,14 @@ func Load() (*Config, error) {
 
 	// Expand home directory paths in the loaded config
 	expandConfigPaths(&cfg)
+
+	// Ensure storage base path exists before validation
+	// This handles the case where config file exists but directories were deleted
+	if cfg.Storage.BasePath != "" {
+		if err := os.MkdirAll(cfg.Storage.BasePath, 0755); err != nil {
+			return nil, fmt.Errorf("failed to create storage base path: %w", err)
+		}
+	}
 
 	// Validate configuration after loading and expanding paths
 	if err := ValidateConfig(&cfg); err != nil {

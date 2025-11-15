@@ -297,7 +297,8 @@ func ValidateStoragePaths(storage StorageConfig) error {
 }
 
 // ValidateCursorPath validates that the cursor log path exists if provided.
-// This is optional, so empty path is valid.
+// This is optional, so empty path is valid. If the path is set but doesn't exist,
+// that's also okay since it's optional functionality - the path may be created later.
 func ValidateCursorPath(path string) error {
 	if path == "" {
 		// Cursor log path is optional
@@ -309,14 +310,19 @@ func ValidateCursorPath(path string) error {
 	resolvedPath, err := filepath.EvalSymlinks(expandedPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("cursor log path does not exist")
+			// Path doesn't exist - that's okay for optional cursor log path
+			// It may be created later or the user may set it when needed
+			return nil
 		}
+		// Some other error checking the path - return error
 		return fmt.Errorf("failed to check cursor log path: %w", err)
 	}
 
+	// Path exists - validate it's a directory
 	info, err := os.Stat(resolvedPath)
 	if err != nil {
-		return fmt.Errorf("failed to check cursor log path: %w", err)
+		// If we can't stat it, that's okay - it's optional
+		return nil
 	}
 
 	if !info.IsDir() {
