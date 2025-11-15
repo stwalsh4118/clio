@@ -8,7 +8,7 @@ Implement SQLite-based indexing system for fast querying of captured conversatio
 
 ## Problem Statement
 
-While markdown files provide human-readable storage, we need a fast, queryable index to enable efficient searching and filtering of captured data. Without indexing, finding relevant sessions would require reading all markdown files, which is slow and inefficient.
+We need a fast, queryable database to enable efficient searching and filtering of captured data. The database serves as the single source of truth for all captured conversations and commits, enabling fast queries without requiring file system operations.
 
 ## User Stories
 
@@ -24,14 +24,15 @@ While markdown files provide human-readable storage, we need a fast, queryable i
 
 **1. SQLite Database Schema**
 - Sessions table: session metadata (ID, start_time, end_time, project, duration)
-- Conversations table: conversation metadata (ID, session_id, file_path, message_count, timestamps)
+- Conversations table: conversation metadata (ID, session_id, composer_id, message_count, timestamps)
+- Messages table: individual message content (ID, conversation_id, role, content, timestamp)
 - Commits table: commit metadata (ID, session_id, hash, message, timestamp, author, branch, files_changed)
 - Full-text search indexes for fast keyword searching
 
-**2. Indexing Service**
-- Index new conversations as they are captured
-- Index new commits as they are captured
-- Update indexes when sessions are modified
+**2. Storage Service**
+- Store new conversations directly in database as they are captured
+- Store new commits directly in database as they are captured
+- Update database records when sessions are modified
 - Maintain referential integrity between tables
 
 **3. Query Interface**
@@ -62,11 +63,20 @@ CREATE TABLE sessions (
 CREATE TABLE conversations (
     id TEXT PRIMARY KEY,
     session_id TEXT NOT NULL,
-    file_path TEXT NOT NULL,
+    composer_id TEXT NOT NULL,
     message_count INTEGER,
     first_message_time TIMESTAMP,
     last_message_time TIMESTAMP,
     FOREIGN KEY (session_id) REFERENCES sessions(id)
+);
+
+CREATE TABLE messages (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL,
+    role INTEGER NOT NULL, -- 1 for user, 2 for agent
+    content TEXT NOT NULL,
+    timestamp TIMESTAMP NOT NULL,
+    FOREIGN KEY (conversation_id) REFERENCES conversations(id)
 );
 
 CREATE TABLE commits (
@@ -84,10 +94,10 @@ CREATE TABLE commits (
 );
 
 -- Full-text search indexes
-CREATE VIRTUAL TABLE conversations_fts USING fts5(
-    session_id,
+CREATE VIRTUAL TABLE messages_fts USING fts5(
+    conversation_id,
     content,
-    content=conversations
+    content=messages
 );
 
 CREATE INDEX idx_sessions_project ON sessions(project);
@@ -99,15 +109,11 @@ CREATE INDEX idx_commits_timestamp ON commits(timestamp);
 ### Data Flow
 
 ```
-Markdown Files Created (PBI-2, PBI-3)
+Conversations Parsed (PBI-2)
     ↓
-Indexing Service Detects New Files
+Store Directly in Database
     ↓
-Extract Metadata from Markdown
-    ↓
-Insert/Update SQLite Database
-    ↓
-Full-text Index Updated
+Full-text Index Updated Automatically
     ↓
 Query Interface Available
 ```
@@ -116,14 +122,14 @@ Query Interface Available
 
 ### Performance
 
-- Indexing should not block capture operations
+- Database writes should not block capture operations
 - Queries should return results in <100ms for typical searches
 - Database should handle thousands of sessions efficiently
 
 ### Reliability
 
 - Database corruption should be detected and handled
-- Indexing failures should not prevent data capture
+- Database write failures should not prevent data capture (log and continue)
 - Regular database backups or recovery mechanisms
 
 ## Acceptance Criteria
@@ -131,16 +137,16 @@ Query Interface Available
 ### Must Have
 
 1. SQLite database is created in configured location (`~/.clio/clio.db`)
-2. Database schema includes sessions, conversations, and commits tables
+2. Database schema includes sessions, conversations, messages, and commits tables
 3. Full-text search indexes are created for keyword searching
-4. New conversations are automatically indexed as they are captured
-5. New commits are automatically indexed as they are captured
+4. New conversations are automatically stored and indexed in database as they are captured
+5. New commits are automatically stored and indexed in database as they are captured
 6. Sessions can be queried by date range
 7. Sessions can be queried by project name
 8. Full-text search returns relevant sessions by keywords
 9. Query performance is acceptable (<100ms for typical queries)
 10. Database handles thousands of sessions without performance degradation
-11. Indexing failures are logged but don't prevent data capture
+11. Database write failures are logged but don't prevent data capture
 12. Database schema can be migrated if changes are needed
 
 ## Dependencies
@@ -162,12 +168,12 @@ Query Interface Available
 
 ## Open Questions
 
-1. **Indexing Strategy**: Should we index markdown content directly or extract structured data?
-2. **Full-text Search**: What content should be indexed? Just messages? Commit messages? Code diffs?
-3. **Database Size**: Should we implement data retention/archival policies?
-4. **Migration Strategy**: How should we handle schema changes in production?
-5. **Backup Strategy**: Should we implement automatic database backups?
-6. **Performance**: Should we implement caching layer for frequently accessed data?
+1. **Full-text Search**: What content should be indexed? Just messages? Commit messages? Code diffs?
+2. **Database Size**: Should we implement data retention/archival policies?
+3. **Migration Strategy**: How should we handle schema changes in production?
+4. **Backup Strategy**: Should we implement automatic database backups?
+5. **Performance**: Should we implement caching layer for frequently accessed data?
+6. **Message Storage**: Should we store full message content or compress/truncate very long messages?
 
 ## Related Tasks
 

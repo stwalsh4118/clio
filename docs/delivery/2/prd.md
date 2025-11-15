@@ -4,7 +4,7 @@
 
 ## Overview
 
-Implement automatic monitoring and capture of Cursor AI conversation logs, parsing them into structured markdown files organized by date and project. This component enables the system to track all developer-AI interactions for later analysis.
+Implement automatic monitoring and capture of Cursor AI conversation logs, parsing them and storing them in a SQLite database organized by date and project. This component enables the system to track all developer-AI interactions for later analysis.
 
 ## Problem Statement
 
@@ -16,7 +16,7 @@ Cursor AI conversations contain valuable insights about problem-solving approach
 
 **As a developer**, I want captured conversations to be organized by date and project so that I can easily find relevant sessions later.
 
-**As a developer**, I want conversations exported to markdown format so that cursor-agent can easily read and analyze them.
+**As a developer**, I want conversations stored in a database so that they can be efficiently queried and analyzed.
 
 ## Technical Approach
 
@@ -46,34 +46,11 @@ Cursor AI conversations contain valuable insights about problem-solving approach
 - Determine session boundaries (time-based or manual)
 - Track session metadata: start time, end time, project, duration
 
-**5. Markdown Export**
-- Convert conversations to structured markdown format
-- Organize by date: `~/.clio/sessions/YYYY-MM-DD/`
-- Organize by project: `~/.clio/sessions/YYYY-MM-DD/<project-name>/`
-- File naming: `conversation-001.md`, `conversation-002.md`, etc.
-
-### Conversation Markdown Format
-
-```markdown
-# Conversation Session: 2025-01-27 14:30:00
-
-**Project**: stream-tv
-**Session ID**: abc123
-**Duration**: 45 minutes
-**Message Count**: 12
-
----
-
-## User Message (14:30:15)
-
-How do I debug websocket connection issues in Go?
-
-## Agent Response (14:30:22)
-
-To debug websocket connection issues, you can...
-
-[conversation continues]
-```
+**5. Database Storage**
+- Store conversations directly in SQLite database
+- Store session metadata in database
+- Store individual messages with proper relationships
+- Enable efficient querying and retrieval
 
 ### Data Flow
 
@@ -90,9 +67,9 @@ Project Detector Maps Composer ID → Project (via workspaceStorage)
     ↓
 Session Tracker Groups Messages by Project & Time
     ↓
-Markdown Exporter Writes Files
+Database Storage Persists Sessions & Conversations
     ↓
-~/.clio/sessions/YYYY-MM-DD/<project>/conversation-001.md
+~/.clio/clio.db (SQLite Database)
 ```
 
 ## UX/UI Considerations
@@ -117,13 +94,13 @@ Markdown Exporter Writes Files
 2. File system watcher detects new conversation files in Cursor log directory
 3. Parser successfully extracts messages from Cursor log format
 4. System correctly identifies user messages vs agent responses
-5. Conversations are exported to markdown files in correct directory structure
-6. Markdown files are human-readable and well-formatted
-7. Session boundaries are correctly determined (time-based or manual)
-8. System handles file system events without blocking
-9. System continues operating stably for 8+ hour sessions
-10. Multiple concurrent conversations are handled correctly
-11. System gracefully handles Cursor log format variations
+5. Conversations are stored in database with proper organization by date and project
+6. Session boundaries are correctly determined (time-based or manual)
+7. System handles file system events without blocking
+8. System continues operating stably for 8+ hour sessions
+9. Multiple concurrent conversations are handled correctly
+10. System gracefully handles Cursor log format variations
+11. Database storage enables efficient querying and retrieval of conversations
 
 ## Dependencies
 
@@ -163,7 +140,7 @@ Tasks will be created in the tasks.md file following the project policy. Initial
 - Implement file system watcher for Cursor log directory
 - Design conversation parser for Cursor log format
 - Implement session tracking logic
-- Create markdown export functionality
+- Implement database storage for conversations
 - Add project detection mechanism
 - Handle conversation updates and modifications
 - Add error handling and logging

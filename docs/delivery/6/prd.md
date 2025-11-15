@@ -28,22 +28,27 @@ To enable cursor-agent to analyze captured development sessions and generate blo
 - `clio analyze` - Create analysis workspace
 - Options: `--hours N`, `--days N`, `--session <id>`, `--project <name>`
 - Query SQLite for relevant sessions
-- Copy markdown files to workspace
+- Generate markdown files on-demand from database
 - Generate prompt template
 
 **2. Workspace Structure**
 - Create workspace directory: `~/.clio/analysis/YYYY-MM-DD-<project>/`
-- Copy relevant conversation markdown files to `sessions/` subdirectory
-- Copy relevant commit markdown files to `sessions/` subdirectory
+- Generate conversation markdown files from database to `sessions/` subdirectory
+- Generate commit markdown files from database to `sessions/` subdirectory
 - Create `README.md` with workspace usage instructions
 - Create `prompt.md` with suggested cursor-agent prompt
 
-**3. Session Selection**
+**3. Markdown Generator**
+- Query database for sessions, conversations, and messages
+- Generate markdown files in readable format for cursor-agent
+- Files are ephemeral (generated in workspace, used by cursor-agent, can be cleaned up)
+
+**4. Session Selection**
 - Query database for sessions matching criteria
 - Include all conversations and commits for selected sessions
 - Handle overlapping time ranges intelligently
 
-**4. Prompt Template Generation**
+**5. Prompt Template Generation**
 - Generate context-aware prompt based on selected sessions
 - Include project information
 - Include session metadata
@@ -108,24 +113,25 @@ clio analyze --project stream-tv --days 7
 1. `clio analyze --hours N` creates workspace with sessions from last N hours
 2. `clio analyze --session <id>` creates workspace for specific session
 3. `clio analyze --project <name> --days N` creates workspace filtered by project and time
-4. Workspace includes all relevant conversation markdown files
-5. Workspace includes all relevant commit markdown files
-6. Workspace includes `README.md` with usage instructions
-7. Workspace includes `prompt.md` with suggested cursor-agent prompt
-8. Prompt template includes project context and session metadata
-9. Workspace directory structure matches specified format
-10. Command outputs clear message with workspace location
-11. Workspace creation handles missing or corrupted data gracefully
-12. Multiple analysis workspaces can coexist (different dates/projects)
+4. Workspace includes generated markdown files created from database queries
+5. Markdown files are generated on-demand when workspace is created
+6. Workspace includes all relevant commit markdown files (generated from database)
+7. Workspace includes `README.md` with usage instructions
+8. Workspace includes `prompt.md` with suggested cursor-agent prompt
+9. Prompt template includes project context and session metadata
+10. Workspace directory structure matches specified format
+11. Command outputs clear message with workspace location
+12. Workspace creation handles missing or corrupted data gracefully
+13. Multiple analysis workspaces can coexist (different dates/projects)
 
 ## Dependencies
 
 ### External Dependencies
 
 - **PBI-1**: Foundation & CLI Framework (for CLI structure)
-- **PBI-2**: Cursor Conversation Capture (for conversation markdown files)
-- **PBI-3**: Git Activity Capture (for commit markdown files)
-- **PBI-4**: Data Indexing & Storage (for querying sessions)
+- **PBI-2**: Cursor Conversation Capture (for conversation data in database)
+- **PBI-3**: Git Activity Capture (for commit data in database)
+- **PBI-4**: Data Indexing & Storage (for querying sessions and generating markdown)
 - **PBI-5**: Data Query Interface (for session selection logic)
 
 ### Go Libraries
@@ -134,8 +140,8 @@ clio analyze --project stream-tv --days 7
 
 ### System Requirements
 
-- Markdown files must exist from PBI-2 and PBI-3
-- SQLite database must be populated
+- SQLite database must be populated with conversations and commits
+- Database must contain sessions, conversations, messages, and commits tables
 
 ## Open Questions
 
@@ -144,7 +150,8 @@ clio analyze --project stream-tv --days 7
 3. **Prompt Customization**: Should users be able to customize prompt templates?
 4. **Workspace Updates**: What happens if user runs analyze again for same time period? Overwrite or create new?
 5. **Size Limits**: Should we limit workspace size or warn if very large?
-6. **Symlinks vs Copies**: Should we copy markdown files or use symlinks to save space?
+6. **Markdown Format**: What format should generated markdown files use? Match original PRD format or simplified?
+7. **Generation Performance**: How should we handle generating markdown for very large sessions (thousands of messages)?
 
 ## Related Tasks
 
@@ -152,8 +159,9 @@ Tasks will be created in the tasks.md file following the project policy. Initial
 
 - Implement analyze command with filtering options
 - Create workspace directory structure
-- Copy conversation markdown files to workspace
-- Copy commit markdown files to workspace
+- Implement markdown generator service (query database and generate markdown files)
+- Generate conversation markdown files from database to workspace
+- Generate commit markdown files from database to workspace
 - Generate README.md template
 - Generate prompt.md template with context
 - Implement session selection logic
