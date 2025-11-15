@@ -9,6 +9,7 @@ import (
 
 	"github.com/stwalsh4118/clio/internal/config"
 	"github.com/stwalsh4118/clio/internal/db"
+	"github.com/stwalsh4118/clio/internal/logging"
 )
 
 const (
@@ -22,6 +23,7 @@ type Daemon struct {
 	done   chan struct{}
 	db     *sql.DB
 	config *config.Config
+	logger logging.Logger
 }
 
 // NewDaemon creates a new daemon instance.
@@ -42,12 +44,21 @@ func NewDaemon() (*Daemon, error) {
 		return nil, fmt.Errorf("failed to initialize database: %w", err)
 	}
 
+	// Initialize logger
+	logger, err := logging.NewLogger(cfg)
+	if err != nil {
+		cancel()
+		database.Close()
+		return nil, fmt.Errorf("failed to initialize logger: %w", err)
+	}
+
 	return &Daemon{
 		ctx:    ctx,
 		cancel: cancel,
 		done:   make(chan struct{}),
 		db:     database,
 		config: cfg,
+		logger: logger,
 	}, nil
 }
 
@@ -63,6 +74,8 @@ func (d *Daemon) Run() error {
 	if err := WritePID(pid); err != nil {
 		return fmt.Errorf("failed to write PID file: %w", err)
 	}
+
+	d.logger.Info("daemon started", "pid", pid)
 
 	// Main daemon loop (placeholder)
 	// This will be replaced with actual monitoring logic in future tasks
@@ -84,6 +97,8 @@ func (d *Daemon) Run() error {
 
 // Shutdown gracefully shuts down the daemon.
 func (d *Daemon) Shutdown() {
+	d.logger.Info("daemon shutdown initiated")
+
 	// Cancel context to signal shutdown
 	d.cancel()
 
@@ -91,9 +106,11 @@ func (d *Daemon) Shutdown() {
 	select {
 	case <-d.done:
 		// Shutdown completed
+		d.logger.Info("daemon shutdown completed")
 	case <-time.After(shutdownTimeout):
 		// Timeout - perform cleanup before force exit
 		// Note: os.Exit terminates immediately, so cleanup must happen before it
+		d.logger.Warn("daemon shutdown timeout, forcing exit")
 		if d.db != nil {
 			_ = d.db.Close()
 		}
@@ -103,11 +120,15 @@ func (d *Daemon) Shutdown() {
 
 	// Close database connection
 	if d.db != nil {
-		_ = d.db.Close()
+		if err := d.db.Close(); err != nil {
+			d.logger.Error("failed to close database", "error", err)
+		}
 	}
 
 	// Remove PID file
-	_ = RemovePIDFile()
+	if err := RemovePIDFile(); err != nil {
+		d.logger.Error("failed to remove PID file", "error", err)
+	}
 }
 
 // Wait waits for the daemon to finish.
