@@ -15,6 +15,6 @@ This document lists all tasks associated with PBI 1.
 | 1-5 | [Implement start/stop/status commands](./1-5.md) | Done | Basic daemon process management (background process, PID file, graceful shutdown) |
 | 1-6 | [Add configuration validation](./1-6.md) | Done | Validate config values, paths, and settings with helpful error messages |
 | 1-7 | [Create default configuration file on first run](./1-7.md) | Done | Auto-create ~/.clio/config.yaml with defaults when missing |
-| 1-8 | [E2E CoS Test](./1-8.md) | Proposed | End-to-end testing to verify all 12 acceptance criteria from the PBI |
+| 1-8 | [E2E CoS Test](./1-8.md) | Done | End-to-end testing to verify all 12 acceptance criteria from the PBI |
 
 
