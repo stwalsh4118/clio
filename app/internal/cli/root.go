@@ -68,14 +68,3 @@ func newStatusCmd() *cobra.Command {
 	}
 }
 
-// newConfigCmd creates the config command (placeholder for task 1-4)
-func newConfigCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "config",
-		Short: "View and modify configuration",
-		Long:  "View and modify clio configuration settings (not yet implemented)",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return fmt.Errorf("config command not yet implemented (task 1-4)")
-		},
-	}
-}
