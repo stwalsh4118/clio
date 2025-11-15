@@ -39,11 +39,15 @@ clio status
 
 #### config
 ```bash
-clio config
+clio config [--show] [--add-watch <path>] [--set-blog-repo <path>]
 ```
 - Short: "View and modify configuration"
-- Status: Placeholder (task 1-4)
-- Returns: Error indicating not yet implemented
+- Flags:
+  - `--show`, `-s`: Display current configuration in YAML format
+  - `--add-watch <path>`: Add directory to watched directories list
+  - `--set-blog-repo <path>`: Set blog repository path
+- Status: Implemented (task 1-4)
+- Validates paths and persists changes to `~/.clio/config.yaml`
 
 ## Service Interfaces
 
@@ -60,7 +64,7 @@ func newStopCmd() *cobra.Command
 func newStatusCmd() *cobra.Command
 func newConfigCmd() *cobra.Command
 ```
-Factory functions that create individual subcommands. Currently return placeholder commands that error when executed.
+Factory functions that create individual subcommands. `newConfigCmd()` is fully implemented; others are placeholders.
 
 ## Constants
 

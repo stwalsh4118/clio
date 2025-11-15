@@ -1,6 +1,6 @@
 # Infrastructure API
 
-Last Updated: 2025-11-14
+Last Updated: 2025-01-27
 
 ## Overview
 
@@ -29,11 +29,21 @@ type Config struct {
 }
 ```
 
+**Additional Functions**:
+```go
+func Save(cfg *Config) error
+func ValidatePath(path string) error
+func IsDuplicate(path string, paths []string) bool
+```
+
 **Features**:
 - Reads from YAML config file at `~/.clio/config.yaml`
 - Environment variable support with `CLIO_` prefix
 - Default values matching PRD schema
 - Automatic home directory expansion (`~` → actual home path)
+- Save configuration to file with path normalization
+- Path validation with security checks (prevents traversal, validates symlinks)
+- Duplicate detection for watched directories
 
 ## Planned Infrastructure (from PRD)
 
