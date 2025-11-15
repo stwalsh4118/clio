@@ -8,11 +8,19 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/stwalsh4118/clio/internal/config"
 	"github.com/stwalsh4118/clio/internal/daemon"
 )
 
 // handleStart implements the start command logic
 func handleStart() error {
+	// Load and validate configuration before starting daemon
+	// Load() validates configuration automatically, so if it succeeds, config is valid
+	_, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
+
 	// Check if daemon is already running
 	running, stale, err := daemon.VerifyDaemonRunning()
 	if err != nil {

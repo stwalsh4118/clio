@@ -104,6 +104,11 @@ func handleAddWatch(cfg *config.Config, path string) error {
 	// Add to watched directories
 	cfg.WatchedDirectories = append(cfg.WatchedDirectories, path)
 
+	// Validate entire configuration before saving
+	if err := config.ValidateConfig(cfg); err != nil {
+		return fmt.Errorf("configuration validation failed: %w", err)
+	}
+
 	// Save configuration
 	if err := config.Save(cfg); err != nil {
 		return fmt.Errorf("failed to save configuration: %w", err)
@@ -122,6 +127,11 @@ func handleSetBlogRepo(cfg *config.Config, path string) error {
 
 	// Set blog repository
 	cfg.BlogRepository = path
+
+	// Validate entire configuration before saving
+	if err := config.ValidateConfig(cfg); err != nil {
+		return fmt.Errorf("configuration validation failed: %w", err)
+	}
 
 	// Save configuration
 	if err := config.Save(cfg); err != nil {
