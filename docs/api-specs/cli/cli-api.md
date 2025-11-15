@@ -18,24 +18,35 @@ clio [flags] [command]
 clio start
 ```
 - Short: "Start the monitoring daemon"
-- Status: Placeholder (task 1-5)
-- Returns: Error indicating not yet implemented
+- Status: Implemented (task 1-5)
+- Creates a background daemon process
+- Stores PID in `~/.clio/clio.pid`
+- Returns error if daemon is already running
+- Handles stale PID files automatically
 
 #### stop
 ```bash
 clio stop
 ```
 - Short: "Stop the monitoring daemon"
-- Status: Placeholder (task 1-5)
-- Returns: Error indicating not yet implemented
+- Status: Implemented (task 1-5)
+- Reads PID from `~/.clio/clio.pid`
+- Verifies process exists and is clio daemon
+- Sends SIGTERM for graceful shutdown
+- Waits up to 10 seconds for process exit
+- Removes PID file after successful shutdown
+- Returns error if daemon is not running
 
 #### status
 ```bash
 clio status
 ```
 - Short: "Check daemon status"
-- Status: Placeholder (task 1-5)
-- Returns: Error indicating not yet implemented
+- Status: Implemented (task 1-5)
+- Checks if PID file exists
+- Verifies process is running
+- Reports "running" or "stopped" status
+- Handles stale PID files automatically
 
 #### config
 ```bash
@@ -63,8 +74,18 @@ func newStartCmd() *cobra.Command
 func newStopCmd() *cobra.Command
 func newStatusCmd() *cobra.Command
 func newConfigCmd() *cobra.Command
+func newDaemonCmd() *cobra.Command  // Hidden, internal use only
 ```
-Factory functions that create individual subcommands. `newConfigCmd()` is fully implemented; others are placeholders.
+Factory functions that create individual subcommands. All commands are fully implemented. `newDaemonCmd()` is hidden and used internally by `start` command.
+
+### Command Handlers (Go)
+```go
+func handleStart() error
+func handleStop() error
+func handleStatus() error
+func handleDaemon() error  // Internal use only
+```
+Handler functions that implement command logic. `handleDaemon()` runs the daemon process and is called internally.
 
 ## Constants
 
