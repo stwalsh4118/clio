@@ -41,6 +41,11 @@ func Load() (*Config, error) {
 	// Expand home directory paths in the loaded config
 	expandConfigPaths(&cfg)
 
+	// Validate configuration after loading and expanding paths
+	if err := ValidateConfig(&cfg); err != nil {
+		return nil, fmt.Errorf("configuration validation failed: %w", err)
+	}
+
 	return &cfg, nil
 }
 
