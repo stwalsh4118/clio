@@ -48,3 +48,20 @@ type CommitSessionCorrelation struct {
 	TimeDiff        time.Duration // Time difference to nearest conversation
 }
 
+// CommitMetadata represents commit metadata extracted from a git commit
+type CommitMetadata struct {
+	Hash         string      // Commit hash (full SHA-1)
+	Message      string      // Commit message (including multi-line)
+	Timestamp    time.Time   // Commit timestamp (author time)
+	Author       AuthorInfo  // Author information
+	Branch       string      // Branch name (or "detached" if in detached HEAD state)
+	IsMerge      bool        // Whether this is a merge commit
+	ParentHashes []string    // Parent commit hashes
+}
+
+// AuthorInfo represents author information for a commit
+type AuthorInfo struct {
+	Name  string // Author name
+	Email string // Author email
+}
+
