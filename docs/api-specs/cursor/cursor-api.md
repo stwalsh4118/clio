@@ -1,6 +1,6 @@
 # Cursor API
 
-Last Updated: 2025-01-27
+Last Updated: 2025-11-16
 
 ## Storage Locations
 
@@ -86,9 +86,14 @@ SELECT value FROM cursorDiskKV WHERE key = 'bubbleId:{composerId}:{bubbleId}';
 ```
 Returns JSON with:
 - `type`: 1 (user) or 2 (agent)
-- `text`: Message content
+- `text`: Message content (may be empty for agent messages with tool calls/code)
 - `createdAt`: ISO 8601 timestamp
 - `bubbleId`: UUID
+- `thinking`: Object with `text` field (agent reasoning, type 2 only)
+- `codeBlocks`: Array of code blocks with `content`, `languageId`, `codeBlockIdx` (type 2 only)
+- `suggestedCodeBlocks`: Array of suggested code blocks (type 2 only)
+- `toolFormerData`: Object with `name`, `status`, `toolIndex` (tool call info, type 2 only)
+- `toolResults`: Array of tool call results (type 2 only)
 
 ### Message Context (Optional)
 
@@ -226,12 +231,31 @@ type Conversation struct {
 }
 
 type Message struct {
-    BubbleID  string                 // Unique identifier for this message bubble
-    Type      int                    // Message type: 1 = user, 2 = agent
-    Role      string                 // Human-readable role: "user" or "agent"
-    Text      string                 // Message content
-    CreatedAt time.Time              // When the message was created
-    Metadata  map[string]interface{} // Additional metadata for future extensibility
+    BubbleID      string                 // Unique identifier for this message bubble
+    Type          int                    // Message type: 1 = user, 2 = agent
+    Role          string                 // Human-readable role: "user" or "agent"
+    Text          string                 // Primary message content (from 'text' field)
+    ThinkingText  string                 // Agent reasoning/thought process (from 'thinking.text', type 2 only)
+    CodeBlocks    []CodeBlock            // Code blocks in the message (type 2 only)
+    ToolCalls     []ToolCall             // Tool calls made by the agent (type 2 only)
+    ContentSource string                 // Where content came from: "text" | "thinking" | "code" | "tool" | "mixed"
+    HasCode       bool                   // Derived: true if code_blocks is not empty
+    HasThinking   bool                   // Derived: true if thinking_text is not empty
+    HasToolCalls  bool                   // Derived: true if tool_calls is not empty
+    CreatedAt     time.Time              // When the message was created
+    Metadata      map[string]interface{} // Additional metadata for future extensibility
+}
+
+type CodeBlock struct {
+    Content     string // The actual code content
+    LanguageID  string // Language identifier (e.g., "go", "typescript", "shellscript")
+    CodeBlockIdx int   // Index of the code block in the message
+}
+
+type ToolCall struct {
+    Name      string // Tool name (e.g., "read_file", "write_file")
+    Status    string // Tool call status (e.g., "completed", "error")
+    ToolIndex int    // Index of the tool call
 }
 ```
 
@@ -262,6 +286,9 @@ type Message struct {
 - Iterates through `fullConversationHeadersOnly` array
 - For each bubble: `SELECT value FROM cursorDiskKV WHERE key = 'bubbleId:{composerId}:{bubbleId}'`
 - Extracts: `type` (1=user, 2=agent), `text`, `createdAt` (ISO 8601), `bubbleId`
+- For agent messages (type 2): Also extracts `thinking.text`, `codeBlocks`/`suggestedCodeBlocks`, `toolFormerData`/`toolResults`
+- Determines `content_source` based on which fields have data
+- Sets derived boolean flags (`has_code`, `has_thinking`, `has_tool_calls`)
 
 ### Timestamp Parsing
 
@@ -429,9 +456,16 @@ CREATE TABLE messages (
     bubble_id TEXT NOT NULL,
     type INTEGER NOT NULL,
     role TEXT NOT NULL,
-    content TEXT NOT NULL,
+    content TEXT NOT NULL,              -- Primary message text (from 'text' field)
+    thinking_text TEXT,                 -- Agent reasoning (type 2 only, nullable)
+    code_blocks TEXT,                   -- JSON array of code blocks (type 2 only, nullable)
+    tool_calls TEXT,                    -- JSON array of tool calls (type 2 only, nullable)
+    has_code INTEGER DEFAULT 0,        -- Boolean flag: 1 if code_blocks is not empty
+    has_thinking INTEGER DEFAULT 0,    -- Boolean flag: 1 if thinking_text is not empty
+    has_tool_calls INTEGER DEFAULT 0,   -- Boolean flag: 1 if tool_calls is not empty
+    content_source TEXT,                -- "text" | "thinking" | "code" | "tool" | "mixed"
     created_at TIMESTAMP NOT NULL,
-    metadata TEXT,
+    metadata TEXT,                      -- Additional metadata as JSON
     FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
 );
 
@@ -444,6 +478,12 @@ CREATE INDEX idx_conversations_created_at ON conversations(created_at);
 CREATE INDEX idx_messages_conversation_id ON messages(conversation_id);
 CREATE INDEX idx_messages_created_at ON messages(created_at);
 CREATE INDEX idx_messages_type ON messages(type);
+
+-- Partial indexes for agent messages only (type 2)
+CREATE INDEX idx_messages_agent_has_code ON messages(has_code) WHERE type = 2;
+CREATE INDEX idx_messages_agent_has_thinking ON messages(has_thinking) WHERE type = 2;
+CREATE INDEX idx_messages_agent_content_source ON messages(content_source) WHERE type = 2;
+CREATE INDEX idx_messages_agent_code_thinking ON messages(has_code, has_thinking) WHERE type = 2;
 ```
 
 **Storage Format**:
@@ -529,6 +569,14 @@ type ConversationStorage interface {
 **Conversation ID**: Uses `composer_id` as the conversation ID (matches Cursor's identifier)
 
 **Message ID**: Uses `bubble_id` as the message ID (matches Cursor's identifier)
+
+**Message Content Fields**:
+- `content`: Primary message text (from `text` field)
+- `thinking_text`: Agent reasoning/thought process (extracted from `thinking.text`, type 2 only)
+- `code_blocks`: JSON array of code blocks (extracted from `codeBlocks`/`suggestedCodeBlocks`, type 2 only)
+- `tool_calls`: JSON array of tool calls (extracted from `toolFormerData`/`toolResults`, type 2 only)
+- `has_code`, `has_thinking`, `has_tool_calls`: Boolean flags for quick filtering
+- `content_source`: Indicates content origin: "text" | "thinking" | "code" | "tool" | "mixed"
 
 **Transaction Handling**: 
 - `StoreConversation` wraps conversation + all messages in a single transaction
