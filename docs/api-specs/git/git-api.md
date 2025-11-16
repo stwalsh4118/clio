@@ -181,6 +181,8 @@ if err != nil {
 
 ### PollerService
 
+**Status**: ✅ Implemented (Task 3-3)
+
 **Package**: `github.com/stwalsh4118/clio/internal/git`
 
 **Interface**:
@@ -239,6 +241,19 @@ for result := range results {
     }
 }
 ```
+
+**Implementation Notes**:
+- Uses `github.com/go-git/go-git/v5` for git operations
+- Polls repositories concurrently using goroutines
+- Thread-safe state management with mutex for last seen commit hashes
+- Handles empty repositories gracefully (no HEAD)
+- Individual repository errors don't stop the poller
+- Uses buffered channel (size 10) for poll results to prevent blocking
+- Follows cursor poller pattern for lifecycle management
+- Configurable polling interval (default: 30 seconds, minimum: 1 second)
+- Initializes last seen hash on start for each repository
+- Collects commits between last seen hash and current HEAD
+- Stops iteration when reaching the last seen hash using sentinel error
 
 ### CommitExtractor
 
