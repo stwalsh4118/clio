@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
@@ -65,13 +66,38 @@ func NewCommitExtractor(logger logging.Logger) (CommitExtractor, error) {
 // ExtractMetadata extracts commit metadata from a git commit
 func (ce *commitExtractor) ExtractMetadata(repo *git.Repository, hash plumbing.Hash) (*CommitMetadata, error) {
 	if repo == nil {
+		ce.logger.Error("repository is nil", "commit", hash.String())
 		return nil, fmt.Errorf("repository cannot be nil")
 	}
 
-	// Get commit object
-	commit, err := repo.CommitObject(hash)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get commit object: %w", err)
+	ce.logger.Debug("extracting commit metadata", "commit", hash.String())
+
+	// Get commit object with retry logic
+	var commit *object.Commit
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			delay := initialRetryDelay * time.Duration(1<<uint(attempt-1))
+			ce.logger.Debug("retrying commit object retrieval", "commit", hash.String(), "attempt", attempt, "delay_ms", delay.Milliseconds())
+			time.Sleep(delay)
+		}
+
+		var err error
+		commit, err = repo.CommitObject(hash)
+		if err != nil {
+			lastErr = err
+			if ce.isTransientError(err) && attempt < maxRetries {
+				ce.logger.Warn("transient error getting commit object, will retry", "commit", hash.String(), "attempt", attempt+1, "error", err)
+				continue
+			}
+			ce.logger.Error("failed to get commit object", "commit", hash.String(), "attempts", attempt+1, "error", err)
+			return nil, fmt.Errorf("failed to get commit object: %w", err)
+		}
+		break // Success
+	}
+
+	if commit == nil {
+		return nil, fmt.Errorf("failed after %d attempts: %w", maxRetries+1, lastErr)
 	}
 
 	// Extract basic metadata
@@ -90,13 +116,13 @@ func (ce *commitExtractor) ExtractMetadata(repo *git.Repository, hash plumbing.H
 	parentIter := commit.Parents()
 	defer parentIter.Close()
 
-	err = parentIter.ForEach(func(parent *object.Commit) error {
+	parentErr := parentIter.ForEach(func(parent *object.Commit) error {
 		parentHashes = append(parentHashes, parent.Hash.String())
 		return nil
 	})
-	if err != nil {
+	if parentErr != nil {
 		// Log error but continue - parent iteration failure shouldn't stop extraction
-		ce.logger.Debug("failed to iterate parent commits", "commit", commit.Hash.String(), "error", err)
+		ce.logger.Debug("failed to iterate parent commits", "commit", commit.Hash.String(), "error", parentErr)
 	}
 
 	metadata.ParentHashes = parentHashes
@@ -108,12 +134,36 @@ func (ce *commitExtractor) ExtractMetadata(repo *git.Repository, hash plumbing.H
 	branchName, err := ce.determineBranchName(repo, hash)
 	if err != nil {
 		// Log warning but continue - branch detection failure shouldn't stop extraction
-		ce.logger.Warn("failed to determine branch name", "commit", commit.Hash.String(), "error", err)
+		ce.logger.Warn("failed to determine branch name, using fallback", "commit", commit.Hash.String(), "error", err)
 		branchName = "unknown"
 	}
 	metadata.Branch = branchName
 
+	ce.logger.Debug("extracted commit metadata", "commit", commit.Hash.String(), "branch", branchName, "is_merge", metadata.IsMerge, "parent_count", len(metadata.ParentHashes))
 	return metadata, nil
+}
+
+// isTransientError checks if an error is likely transient and worth retrying
+func (ce *commitExtractor) isTransientError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	// Check for common transient error patterns
+	transientPatterns := []string{
+		"locked",
+		"busy",
+		"temporary",
+		"timeout",
+		"connection",
+		"network",
+	}
+	for _, pattern := range transientPatterns {
+		if strings.Contains(strings.ToLower(errStr), pattern) {
+			return true
+		}
+	}
+	return false
 }
 
 // determineBranchName determines the branch name for a commit
@@ -201,13 +251,38 @@ func (ce *commitExtractor) findBranchContainingCommit(repo *git.Repository, comm
 // ExtractDiff extracts commit diff from a git commit
 func (ce *commitExtractor) ExtractDiff(repo *git.Repository, hash plumbing.Hash) (*Diff, error) {
 	if repo == nil {
+		ce.logger.Error("repository is nil", "commit", hash.String())
 		return nil, fmt.Errorf("repository cannot be nil")
 	}
 
-	// Get commit object
-	commit, err := repo.CommitObject(hash)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get commit object: %w", err)
+	ce.logger.Debug("extracting commit diff", "commit", hash.String())
+
+	// Get commit object with retry logic
+	var commit *object.Commit
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			delay := initialRetryDelay * time.Duration(1<<uint(attempt-1))
+			ce.logger.Debug("retrying commit object retrieval for diff", "commit", hash.String(), "attempt", attempt, "delay_ms", delay.Milliseconds())
+			time.Sleep(delay)
+		}
+
+		var err error
+		commit, err = repo.CommitObject(hash)
+		if err != nil {
+			lastErr = err
+			if ce.isTransientError(err) && attempt < maxRetries {
+				ce.logger.Warn("transient error getting commit object for diff, will retry", "commit", hash.String(), "attempt", attempt+1, "error", err)
+				continue
+			}
+			ce.logger.Error("failed to get commit object for diff", "commit", hash.String(), "attempts", attempt+1, "error", err)
+			return nil, fmt.Errorf("failed to get commit object: %w", err)
+		}
+		break // Success
+	}
+
+	if commit == nil {
+		return nil, fmt.Errorf("failed after %d attempts: %w", maxRetries+1, lastErr)
 	}
 
 	// Generate patch
@@ -238,13 +313,14 @@ func (ce *commitExtractor) ExtractDiff(repo *git.Repository, hash plumbing.Hash)
 		} else {
 			return nil, fmt.Errorf("failed to get parent commit: %w", err)
 		}
-	} else {
-		// Normal commit or merge commit (use first parent)
-		patch, err = parent.Patch(commit)
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate patch: %w", err)
+		} else {
+			// Normal commit or merge commit (use first parent)
+			patch, err = parent.Patch(commit)
+			if err != nil {
+				ce.logger.Error("failed to generate patch", "commit", commit.Hash.String(), "error", err)
+				return nil, fmt.Errorf("failed to generate patch: %w", err)
+			}
 		}
-	}
 
 	// Extract full diff string
 	fullDiff := patch.String()
@@ -293,6 +369,7 @@ func (ce *commitExtractor) ExtractDiff(repo *git.Repository, hash plumbing.Hash)
 			Additions: additions,
 			Deletions: deletions,
 		})
+		ce.logger.Debug("processed file diff", "commit", commit.Hash.String(), "file", filePath, "additions", additions, "deletions", deletions)
 	}
 
 	// Handle large diffs - truncate if necessary
@@ -310,9 +387,10 @@ func (ce *commitExtractor) ExtractDiff(repo *git.Repository, hash plumbing.Hash)
 		truncationNote := fmt.Sprintf("\n\n[Diff truncated: %d lines total, showing first %d lines]", totalLines, MaxDiffLines)
 		content = strings.Join(truncatedLines, "\n") + truncationNote
 
-		ce.logger.Info("truncated large diff", "commit", commit.Hash.String(), "total_lines", totalLines, "shown_lines", shownLines)
+		ce.logger.Info("truncated large diff", "commit", commit.Hash.String(), "total_lines", totalLines, "shown_lines", shownLines, "file_count", len(files))
 	}
 
+	ce.logger.Debug("extracted commit diff", "commit", commit.Hash.String(), "file_count", len(files), "total_lines", totalLines, "truncated", truncated)
 	return &Diff{
 		Content:    content,
 		Files:      files,
@@ -324,18 +402,23 @@ func (ce *commitExtractor) ExtractDiff(repo *git.Repository, hash plumbing.Hash)
 
 // ExtractCommit extracts complete commit information (metadata + diff)
 func (ce *commitExtractor) ExtractCommit(repo *git.Repository, hash plumbing.Hash) (*CommitInfo, error) {
+	ce.logger.Debug("extracting complete commit information", "commit", hash.String())
+
 	// Extract metadata
 	metadata, err := ce.ExtractMetadata(repo, hash)
 	if err != nil {
+		ce.logger.Error("failed to extract metadata", "commit", hash.String(), "error", err)
 		return nil, fmt.Errorf("failed to extract metadata: %w", err)
 	}
 
 	// Extract diff
 	diff, err := ce.ExtractDiff(repo, hash)
 	if err != nil {
+		ce.logger.Error("failed to extract diff", "commit", hash.String(), "error", err)
 		return nil, fmt.Errorf("failed to extract diff: %w", err)
 	}
 
+	ce.logger.Info("extracted complete commit information", "commit", hash.String(), "file_count", len(diff.Files))
 	return &CommitInfo{
 		Commit: *metadata,
 		Diff:   *diff,
