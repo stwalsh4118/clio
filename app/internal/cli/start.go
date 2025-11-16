@@ -57,36 +57,57 @@ func handleStart() error {
 		return fmt.Errorf("failed to get absolute executable path: %w", err)
 	}
 
+	// Check if running in dev mode (for Air hot reload)
+	isDevMode := os.Getenv("CLIO_DEV") == "true"
+
 	// Create command to run daemon
 	cmd := exec.Command(exePath, "daemon")
 
-	// Set minimal environment variables for security
-	// Only include essential vars and our daemon flag
-	// This prevents environment variable injection attacks
-	cmd.Env = []string{
+	// Set environment variables
+	env := []string{
 		"HOME=" + os.Getenv("HOME"),
 		"USER=" + os.Getenv("USER"),
-		"PATH=/usr/bin:/bin", // Minimal PATH for security
 		"CLIO_DAEMON=true",
 	}
 
-	// Set up process attributes for daemonization
-	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Setsid: true, // Create new session
+	// In dev mode, enable console logging
+	if isDevMode {
+		env = append(env, "CLIO_LOGGING_CONSOLE=true")
+		// Don't redirect output - let it go to terminal
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+	} else {
+		// Production mode: minimal PATH for security
+		env = append(env, "PATH=/usr/bin:/bin")
+		// Set up process attributes for daemonization
+		cmd.SysProcAttr = &syscall.SysProcAttr{
+			Setsid: true, // Create new session
+		}
+		// Redirect stdin, stdout, stderr to /dev/null
+		devNull, err := os.OpenFile("/dev/null", os.O_RDWR, 0)
+		if err != nil {
+			return fmt.Errorf("failed to open /dev/null: %w", err)
+		}
+		defer devNull.Close()
+		cmd.Stdin = devNull
+		cmd.Stdout = devNull
+		cmd.Stderr = devNull
 	}
 
-	// Redirect stdin, stdout, stderr to /dev/null
-	devNull, err := os.OpenFile("/dev/null", os.O_RDWR, 0)
-	if err != nil {
-		return fmt.Errorf("failed to open /dev/null: %w", err)
+	cmd.Env = env
+
+	if isDevMode {
+		// In dev mode, run in foreground and wait for it
+		// This allows Air to kill the process on hot reload
+		fmt.Println("Starting daemon in dev mode (foreground, console logging enabled)...")
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("daemon exited with error: %w", err)
+		}
+		return nil
 	}
-	defer devNull.Close()
 
-	cmd.Stdin = devNull
-	cmd.Stdout = devNull
-	cmd.Stderr = devNull
-
-	// Start the daemon process
+	// Production mode: Start the daemon process in background
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("failed to start daemon: %w", err)
 	}
