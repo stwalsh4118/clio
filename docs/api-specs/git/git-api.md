@@ -569,6 +569,82 @@ All services follow graceful degradation:
 - Fetches commits incrementally between last seen and HEAD
 - Configurable polling interval balances responsiveness and resource usage
 
+### CorrelationService
+
+**Status**: ✅ Implemented (Task 3-6)
+
+**Package**: `github.com/stwalsh4118/clio/internal/git`
+
+**Interface**:
+```go
+type CorrelationService interface {
+    CorrelateCommit(commit CommitMetadata, repository Repository, sessionManager cursor.SessionManager) (*CommitSessionCorrelation, error)
+    CorrelateCommits(commits []CommitMetadata, repository Repository, sessionManager cursor.SessionManager) ([]CommitSessionCorrelation, error)
+    GroupCommitsBySession(correlations []CommitSessionCorrelation) (map[string][]CommitSessionCorrelation, error)
+}
+```
+
+**Methods**:
+
+- **CorrelateCommit**: Correlates a single commit with sessions
+  - Input: `commit CommitMetadata` - Commit metadata to correlate
+  - Input: `repository Repository` - Repository information
+  - Input: `sessionManager cursor.SessionManager` - Session manager for accessing sessions
+  - Output: `*CommitSessionCorrelation` - Correlation result
+  - Output: `error` - Error if correlation fails
+  - Behavior: Matches commit to sessions by project name and timestamp proximity
+  - Behavior: Determines correlation type: "active", "proximate", or "none"
+  - Behavior: Calculates time difference to nearest conversation message
+
+- **CorrelateCommits**: Correlates multiple commits with sessions
+  - Input: `commits []CommitMetadata` - Commits to correlate
+  - Input: `repository Repository` - Repository information
+  - Input: `sessionManager cursor.SessionManager` - Session manager
+  - Output: `[]CommitSessionCorrelation` - Correlation results
+  - Output: `error` - Error if correlation fails
+  - Behavior: Correlates each commit individually
+  - Behavior: Continues processing even if individual commits fail
+
+- **GroupCommitsBySession**: Groups correlated commits by session ID
+  - Input: `correlations []CommitSessionCorrelation` - Correlation results
+  - Output: `map[string][]CommitSessionCorrelation` - Commits grouped by session ID
+  - Output: `error` - Error if grouping fails
+  - Behavior: Groups commits with same session ID together
+  - Behavior: Commits with no correlation are grouped under empty string key
+
+**Usage Pattern**:
+```go
+correlationService, err := git.NewCorrelationService(logger, database)
+if err != nil {
+    return fmt.Errorf("failed to create correlation service: %w", err)
+}
+
+correlation, err := correlationService.CorrelateCommit(commit, repository, sessionManager)
+if err != nil {
+    return fmt.Errorf("failed to correlate commit: %w", err)
+}
+
+// Use correlation.SessionID, correlation.CorrelationType, etc.
+```
+
+**Correlation Logic**:
+
+1. **Project Matching**: Normalizes repository path to project name and matches against session project names
+2. **Timestamp Correlation**: Checks if commit timestamp is within 5-minute window of any conversation message
+3. **Correlation Types**:
+   - **"active"**: Commit timestamp falls within session time window AND within 5 minutes of conversation message
+   - **"proximate"**: Commit timestamp is within 5 minutes of conversation message but NOT during active session window
+   - **"none"**: No correlation found
+4. **Best Match Selection**: Prefers "active" over "proximate" over "none", and closer timestamps for same type
+
+**Implementation Notes**:
+- Uses 5-minute correlation window (configurable via `correlationWindow` constant)
+- Normalizes project names using same logic as `cursor.ProjectDetector.NormalizeProjectName()`
+- Loads all sessions (active + ended) from database for correlation
+- Loads conversations and messages for each session to check timestamp proximity
+- Handles edge cases: commits before/after sessions, overlapping sessions, no matching projects
+- Gracefully handles missing conversations table (returns empty slice)
+
 ## Notes
 
 - All git operations use pure Go implementation (go-git)
@@ -577,4 +653,5 @@ All services follow graceful degradation:
 - Polling strategy can be enhanced to watch `.git` directories if needed
 - Commits are persisted to database following same pattern as conversations
 - Database schema supports session correlation via foreign key
+- Commit-to-session correlation uses 5-minute window for timestamp matching
 
