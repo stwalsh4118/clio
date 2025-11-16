@@ -70,13 +70,8 @@ func (u *conversationUpdater) openCursorDatabase() (*sql.DB, error) {
 }
 
 // getComposerMessageCount gets the current message count for a composer ID from Cursor database
-func (u *conversationUpdater) getComposerMessageCount(composerID string) (int, error) {
-	cursorDB, err := u.openCursorDatabase()
-	if err != nil {
-		return 0, err
-	}
-	defer cursorDB.Close()
-
+// cursorDB should be an already-open connection (reused for multiple queries)
+func (u *conversationUpdater) getComposerMessageCount(cursorDB *sql.DB, composerID string) (int, error) {
 	key := fmt.Sprintf("composerData:%s", composerID)
 	query := "SELECT value FROM cursorDiskKV WHERE key = ?"
 
@@ -84,6 +79,7 @@ func (u *conversationUpdater) getComposerMessageCount(composerID string) (int, e
 	// Retry query with exponential backoff on SQLITE_BUSY errors
 	maxRetries := 5
 	baseDelay := 50 * time.Millisecond
+	var err error
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		err = cursorDB.QueryRow(query, key).Scan(&valueBlob)
 		if err == nil {
@@ -186,11 +182,20 @@ func (u *conversationUpdater) DetectUpdatedComposers() ([]string, error) {
 		return nil, fmt.Errorf("failed to get composer IDs: %w", err)
 	}
 
+	// Open a single connection and reuse it for all composer checks
+	cursorDB, err := u.openCursorDatabase()
+	if err != nil {
+		return nil, fmt.Errorf("failed to open Cursor database: %w", err)
+	}
+	defer cursorDB.Close()
+
 	var updatedComposers []string
+	checkedCount := 0
 
 	for _, composerID := range composerIDs {
-		// Get current message count from Cursor database
-		currentCount, err := u.getComposerMessageCount(composerID)
+		checkedCount++
+		// Get current message count from Cursor database (reusing the same connection)
+		currentCount, err := u.getComposerMessageCount(cursorDB, composerID)
 		if err != nil {
 			u.logger.Warn("failed to get message count for composer", "composer_id", composerID, "error", err)
 			continue // Skip this composer, continue with others
@@ -211,6 +216,9 @@ func (u *conversationUpdater) DetectUpdatedComposers() ([]string, error) {
 			updatedComposers = append(updatedComposers, composerID)
 		}
 	}
+
+	// Log summary at DEBUG level (poller will log at INFO if updates found)
+	u.logger.Debug("checked composers for updates", "total_checked", checkedCount, "updated_count", len(updatedComposers))
 
 	return updatedComposers, nil
 }

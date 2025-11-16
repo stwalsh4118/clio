@@ -61,8 +61,9 @@ func OpenCursorDatabase(cfg *config.Config) (*sql.DB, error) {
 		return nil, fmt.Errorf("failed to ping Cursor database: %w", err)
 	}
 
-	// Log connection creation for diagnostics (only log first few and then periodically)
-	if connNum <= 5 || connNum%10 == 0 {
+	// Log connection creation for diagnostics (only log first few, then every 100th)
+	// This reduces noise during normal operation while still providing diagnostics
+	if connNum <= 3 || connNum%100 == 0 {
 		stats := db.Stats()
 		fmt.Printf("[DIAG] Cursor DB connection #%d created by %s (OpenConns: %d, InUse: %d, Idle: %d)\n",
 			connNum, caller, stats.OpenConnections, stats.InUse, stats.Idle)
@@ -81,31 +82,13 @@ func IsSQLiteBusyError(err error) bool {
 }
 
 // LogSQLiteBusyDiagnostics logs diagnostic information when a SQLITE_BUSY error occurs
+// This is expected when Cursor is actively writing to the database - retry logic handles it
 func LogSQLiteBusyDiagnostics(err error, component string, operation string) {
 	if !IsSQLiteBusyError(err) {
 		return
 	}
 
-	// Get stack trace (limit to 10 frames)
-	buf := make([]byte, 4096)
-	n := runtime.Stack(buf, false)
-	stack := string(buf[:n])
-
-	// Extract relevant goroutine info
-	lines := strings.Split(stack, "\n")
-	var goroutineInfo []string
-	for i, line := range lines {
-		if i < 20 { // Limit to first 20 lines
-			goroutineInfo = append(goroutineInfo, line)
-		} else {
-			break
-		}
-	}
-
-	fmt.Printf("[DIAG] SQLITE_BUSY error detected:\n")
-	fmt.Printf("  Component: %s\n", component)
-	fmt.Printf("  Operation: %s\n", operation)
-	fmt.Printf("  Error: %v\n", err)
-	fmt.Printf("  Total connections created: %d\n", atomic.LoadInt64(&connectionCounter))
-	fmt.Printf("  Stack trace:\n%s\n", strings.Join(goroutineInfo, "\n"))
+	// Log a simple diagnostic message (no stack trace to reduce noise)
+	// SQLITE_BUSY is expected and handled by retry logic, so this is just informational
+	fmt.Printf("[DIAG] SQLITE_BUSY (expected when Cursor is writing) - %s: %s - retrying...\n", component, operation)
 }
