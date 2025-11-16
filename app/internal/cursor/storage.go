@@ -144,6 +144,28 @@ func (cs *conversationStorage) StoreConversation(conversation *Conversation, ses
 
 // storeMessageInTx stores a message within an existing transaction
 func (cs *conversationStorage) storeMessageInTx(tx *sql.Tx, message *Message, conversationID string) error {
+	// Marshal code blocks to JSON
+	var codeBlocksJSON sql.NullString
+	if len(message.CodeBlocks) > 0 {
+		codeBlocksBytes, err := json.Marshal(message.CodeBlocks)
+		if err != nil {
+			cs.logger.Warn("failed to marshal code blocks", "conversation_id", conversationID, "bubble_id", message.BubbleID, "error", err)
+			return fmt.Errorf("failed to marshal code blocks: %w", err)
+		}
+		codeBlocksJSON = sql.NullString{String: string(codeBlocksBytes), Valid: true}
+	}
+
+	// Marshal tool calls to JSON
+	var toolCallsJSON sql.NullString
+	if len(message.ToolCalls) > 0 {
+		toolCallsBytes, err := json.Marshal(message.ToolCalls)
+		if err != nil {
+			cs.logger.Warn("failed to marshal tool calls", "conversation_id", conversationID, "bubble_id", message.BubbleID, "error", err)
+			return fmt.Errorf("failed to marshal tool calls: %w", err)
+		}
+		toolCallsJSON = sql.NullString{String: string(toolCallsBytes), Valid: true}
+	}
+
 	// Marshal metadata to JSON
 	var metadataJSON sql.NullString
 	if len(message.Metadata) > 0 {
@@ -155,15 +177,53 @@ func (cs *conversationStorage) storeMessageInTx(tx *sql.Tx, message *Message, co
 		metadataJSON = sql.NullString{String: string(metadataBytes), Valid: true}
 	}
 
+	// Convert boolean flags to integers for database storage
+	hasCodeInt := 0
+	if message.HasCode {
+		hasCodeInt = 1
+	}
+	hasThinkingInt := 0
+	if message.HasThinking {
+		hasThinkingInt = 1
+	}
+	hasToolCallsInt := 0
+	if message.HasToolCalls {
+		hasToolCallsInt = 1
+	}
+
+	// Handle thinking_text (nullable)
+	var thinkingTextNull sql.NullString
+	if message.ThinkingText != "" {
+		thinkingTextNull = sql.NullString{String: message.ThinkingText, Valid: true}
+	}
+
+	// Handle content_source (nullable)
+	var contentSourceNull sql.NullString
+	if message.ContentSource != "" {
+		contentSourceNull = sql.NullString{String: message.ContentSource, Valid: true}
+	}
+
 	_, err := tx.Exec(`
-		INSERT INTO messages (id, conversation_id, bubble_id, type, role, content, created_at, metadata)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO messages (
+			id, conversation_id, bubble_id, type, role, content, 
+			thinking_text, code_blocks, tool_calls,
+			has_code, has_thinking, has_tool_calls, content_source,
+			created_at, metadata
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			conversation_id = excluded.conversation_id,
 			bubble_id = excluded.bubble_id,
 			type = excluded.type,
 			role = excluded.role,
 			content = excluded.content,
+			thinking_text = excluded.thinking_text,
+			code_blocks = excluded.code_blocks,
+			tool_calls = excluded.tool_calls,
+			has_code = excluded.has_code,
+			has_thinking = excluded.has_thinking,
+			has_tool_calls = excluded.has_tool_calls,
+			content_source = excluded.content_source,
 			created_at = excluded.created_at,
 			metadata = excluded.metadata
 	`,
@@ -173,6 +233,13 @@ func (cs *conversationStorage) storeMessageInTx(tx *sql.Tx, message *Message, co
 		message.Type,
 		message.Role,
 		message.Text,
+		thinkingTextNull,
+		codeBlocksJSON,
+		toolCallsJSON,
+		hasCodeInt,
+		hasThinkingInt,
+		hasToolCallsInt,
+		contentSourceNull,
 		message.CreatedAt,
 		metadataJSON,
 	)
@@ -181,7 +248,7 @@ func (cs *conversationStorage) storeMessageInTx(tx *sql.Tx, message *Message, co
 		return fmt.Errorf("failed to insert message: %w", err)
 	}
 
-	cs.logger.Debug("stored message", "conversation_id", conversationID, "bubble_id", message.BubbleID, "role", message.Role)
+	cs.logger.Debug("stored message", "conversation_id", conversationID, "bubble_id", message.BubbleID, "role", message.Role, "has_code", message.HasCode, "has_thinking", message.HasThinking)
 	return nil
 }
 
@@ -475,7 +542,10 @@ func (cs *conversationStorage) GetConversationsBySession(sessionID string) ([]*C
 // getMessagesByConversationID retrieves all messages for a conversation, ordered by created_at
 func (cs *conversationStorage) getMessagesByConversationID(conversationID string) ([]Message, error) {
 	rows, err := cs.db.Query(`
-		SELECT id, bubble_id, type, role, content, created_at, metadata
+		SELECT id, bubble_id, type, role, content, 
+			thinking_text, code_blocks, tool_calls,
+			has_code, has_thinking, has_tool_calls, content_source,
+			created_at, metadata
 		FROM messages
 		WHERE conversation_id = ?
 		ORDER BY created_at ASC
@@ -490,7 +560,8 @@ func (cs *conversationStorage) getMessagesByConversationID(conversationID string
 	var skippedCount int
 	for rows.Next() {
 		var msg Message
-		var metadataJSON sql.NullString
+		var thinkingTextNull, codeBlocksJSON, toolCallsJSON, metadataJSON, contentSourceNull sql.NullString
+		var hasCodeInt, hasThinkingInt, hasToolCallsInt int
 
 		err := rows.Scan(
 			&msg.BubbleID,
@@ -498,6 +569,13 @@ func (cs *conversationStorage) getMessagesByConversationID(conversationID string
 			&msg.Type,
 			&msg.Role,
 			&msg.Text,
+			&thinkingTextNull,
+			&codeBlocksJSON,
+			&toolCallsJSON,
+			&hasCodeInt,
+			&hasThinkingInt,
+			&hasToolCallsInt,
+			&contentSourceNull,
 			&msg.CreatedAt,
 			&metadataJSON,
 		)
@@ -505,6 +583,37 @@ func (cs *conversationStorage) getMessagesByConversationID(conversationID string
 			cs.logger.Warn("failed to scan message row, skipping", "conversation_id", conversationID, "error", err)
 			skippedCount++
 			continue // Skip invalid rows
+		}
+
+		// Parse thinking_text
+		if thinkingTextNull.Valid {
+			msg.ThinkingText = thinkingTextNull.String
+		}
+
+		// Parse code blocks JSON
+		if codeBlocksJSON.Valid && codeBlocksJSON.String != "" {
+			if err := json.Unmarshal([]byte(codeBlocksJSON.String), &msg.CodeBlocks); err != nil {
+				cs.logger.Warn("failed to parse code blocks JSON, using empty slice", "conversation_id", conversationID, "bubble_id", msg.BubbleID, "error", err)
+				msg.CodeBlocks = []CodeBlock{}
+			}
+		}
+
+		// Parse tool calls JSON
+		if toolCallsJSON.Valid && toolCallsJSON.String != "" {
+			if err := json.Unmarshal([]byte(toolCallsJSON.String), &msg.ToolCalls); err != nil {
+				cs.logger.Warn("failed to parse tool calls JSON, using empty slice", "conversation_id", conversationID, "bubble_id", msg.BubbleID, "error", err)
+				msg.ToolCalls = []ToolCall{}
+			}
+		}
+
+		// Parse boolean flags
+		msg.HasCode = hasCodeInt == 1
+		msg.HasThinking = hasThinkingInt == 1
+		msg.HasToolCalls = hasToolCallsInt == 1
+
+		// Parse content_source
+		if contentSourceNull.Valid {
+			msg.ContentSource = contentSourceNull.String
 		}
 
 		// Parse metadata JSON
