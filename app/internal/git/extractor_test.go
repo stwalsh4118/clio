@@ -1,8 +1,10 @@
 package git
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -486,6 +488,456 @@ func TestExtractMetadata_BranchName(t *testing.T) {
 
 	if metadata.Branch != "main" && metadata.Branch != "master" {
 		t.Errorf("expected branch to be 'main' or 'master', got '%s'", metadata.Branch)
+	}
+}
+
+func TestExtractDiff_NormalCommit(t *testing.T) {
+	logger := logging.NewNoopLogger()
+	extractor, err := NewCommitExtractor(logger)
+	if err != nil {
+		t.Fatalf("failed to create extractor: %v", err)
+	}
+
+	// Create test repository with a commit
+	tmpDir := t.TempDir()
+	repoPath := filepath.Join(tmpDir, "test-repo")
+	repo, err := git.PlainInit(repoPath, false)
+	if err != nil {
+		t.Fatalf("failed to init repo: %v", err)
+	}
+
+	worktree, err := repo.Worktree()
+	if err != nil {
+		t.Fatalf("failed to get worktree: %v", err)
+	}
+
+	// Create a file with some content
+	testFile := filepath.Join(repoPath, "test.txt")
+	content := "line 1\nline 2\nline 3\n"
+	if err := os.WriteFile(testFile, []byte(content), 0644); err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
+
+	if _, err := worktree.Add("test.txt"); err != nil {
+		t.Fatalf("failed to add file: %v", err)
+	}
+
+	headHash, err := worktree.Commit("Initial commit", &git.CommitOptions{
+		Author: &object.Signature{
+			Name:  "Test Author",
+			Email: "test@example.com",
+			When:  time.Now(),
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to commit: %v", err)
+	}
+
+	// Extract diff
+	diff, err := extractor.ExtractDiff(repo, headHash)
+	if err != nil {
+		t.Fatalf("failed to extract diff: %v", err)
+	}
+
+	// Verify diff content is not empty
+	if diff.Content == "" {
+		t.Error("expected diff content to be non-empty")
+	}
+
+	// Verify file statistics
+	if len(diff.Files) != 1 {
+		t.Errorf("expected 1 file, got %d", len(diff.Files))
+	}
+
+	if diff.Files[0].Path != "test.txt" {
+		t.Errorf("expected file path 'test.txt', got '%s'", diff.Files[0].Path)
+	}
+
+	// Initial commit should have additions (3 lines)
+	if diff.Files[0].Additions < 3 {
+		t.Errorf("expected at least 3 additions, got %d", diff.Files[0].Additions)
+	}
+
+	if diff.Files[0].Deletions != 0 {
+		t.Errorf("expected 0 deletions for initial commit, got %d", diff.Files[0].Deletions)
+	}
+
+	// Should not be truncated for small diff
+	if diff.Truncated {
+		t.Error("expected diff not to be truncated")
+	}
+}
+
+func TestExtractDiff_CommitWithModifications(t *testing.T) {
+	logger := logging.NewNoopLogger()
+	extractor, err := NewCommitExtractor(logger)
+	if err != nil {
+		t.Fatalf("failed to create extractor: %v", err)
+	}
+
+	// Create test repository with multiple commits
+	tmpDir := t.TempDir()
+	repoPath := filepath.Join(tmpDir, "test-repo")
+	repo, err := createGitRepoWithCommits(t, repoPath, 1)
+	if err != nil {
+		t.Fatalf("failed to create test repo: %v", err)
+	}
+
+	worktree, err := repo.Worktree()
+	if err != nil {
+		t.Fatalf("failed to get worktree: %v", err)
+	}
+
+	// Modify the file
+	testFile := filepath.Join(repoPath, "test.txt")
+	newContent := "modified line 1\nmodified line 2\nnew line 3\nnew line 4\n"
+	if err := os.WriteFile(testFile, []byte(newContent), 0644); err != nil {
+		t.Fatalf("failed to modify file: %v", err)
+	}
+
+	if _, err := worktree.Add("test.txt"); err != nil {
+		t.Fatalf("failed to add file: %v", err)
+	}
+
+	headHash, err := worktree.Commit("Modify file", &git.CommitOptions{
+		Author: &object.Signature{
+			Name:  "Test Author",
+			Email: "test@example.com",
+			When:  time.Now(),
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to commit: %v", err)
+	}
+
+	// Extract diff
+	diff, err := extractor.ExtractDiff(repo, headHash)
+	if err != nil {
+		t.Fatalf("failed to extract diff: %v", err)
+	}
+
+	// Verify diff content
+	if diff.Content == "" {
+		t.Error("expected diff content to be non-empty")
+	}
+
+	// Verify file statistics
+	if len(diff.Files) != 1 {
+		t.Errorf("expected 1 file, got %d", len(diff.Files))
+	}
+
+	// Should have both additions and deletions
+	if diff.Files[0].Additions == 0 && diff.Files[0].Deletions == 0 {
+		t.Error("expected non-zero additions or deletions")
+	}
+}
+
+func TestExtractDiff_InitialCommit(t *testing.T) {
+	logger := logging.NewNoopLogger()
+	extractor, err := NewCommitExtractor(logger)
+	if err != nil {
+		t.Fatalf("failed to create extractor: %v", err)
+	}
+
+	// Create test repository with initial commit
+	tmpDir := t.TempDir()
+	repoPath := filepath.Join(tmpDir, "test-repo")
+	repo, err := createGitRepoWithCommits(t, repoPath, 1)
+	if err != nil {
+		t.Fatalf("failed to create test repo: %v", err)
+	}
+
+	// Get HEAD commit hash (this is the initial commit)
+	headRef, err := repo.Head()
+	if err != nil {
+		t.Fatalf("failed to get HEAD: %v", err)
+	}
+
+	// Extract diff from initial commit
+	diff, err := extractor.ExtractDiff(repo, headRef.Hash())
+	if err != nil {
+		t.Fatalf("failed to extract diff: %v", err)
+	}
+
+	// Verify diff was extracted
+	if diff == nil {
+		t.Fatal("expected diff to be non-nil")
+	}
+
+	// Initial commit should have file changes
+	if len(diff.Files) == 0 {
+		t.Error("expected at least one file change in initial commit")
+	}
+
+	// Should have additions (new files)
+	hasAdditions := false
+	for _, file := range diff.Files {
+		if file.Additions > 0 {
+			hasAdditions = true
+			break
+		}
+	}
+	if !hasAdditions {
+		t.Error("expected initial commit to have file additions")
+	}
+}
+
+func TestExtractDiff_MultipleFiles(t *testing.T) {
+	logger := logging.NewNoopLogger()
+	extractor, err := NewCommitExtractor(logger)
+	if err != nil {
+		t.Fatalf("failed to create extractor: %v", err)
+	}
+
+	// Create test repository
+	tmpDir := t.TempDir()
+	repoPath := filepath.Join(tmpDir, "test-repo")
+	repo, err := git.PlainInit(repoPath, false)
+	if err != nil {
+		t.Fatalf("failed to init repo: %v", err)
+	}
+
+	worktree, err := repo.Worktree()
+	if err != nil {
+		t.Fatalf("failed to get worktree: %v", err)
+	}
+
+	// Create initial commit
+	testFile1 := filepath.Join(repoPath, "file1.txt")
+	if err := os.WriteFile(testFile1, []byte("content1"), 0644); err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
+
+	if _, err := worktree.Add("file1.txt"); err != nil {
+		t.Fatalf("failed to add file: %v", err)
+	}
+
+	_, err = worktree.Commit("Initial commit", &git.CommitOptions{
+		Author: &object.Signature{
+			Name:  "Test Author",
+			Email: "test@example.com",
+			When:  time.Now(),
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to commit: %v", err)
+	}
+
+	// Add multiple files in second commit
+	testFile2 := filepath.Join(repoPath, "file2.txt")
+	if err := os.WriteFile(testFile2, []byte("content2"), 0644); err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
+
+	testFile3 := filepath.Join(repoPath, "file3.txt")
+	if err := os.WriteFile(testFile3, []byte("content3"), 0644); err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
+
+	if _, err := worktree.Add("file2.txt"); err != nil {
+		t.Fatalf("failed to add file: %v", err)
+	}
+	if _, err := worktree.Add("file3.txt"); err != nil {
+		t.Fatalf("failed to add file: %v", err)
+	}
+
+	headHash, err := worktree.Commit("Add multiple files", &git.CommitOptions{
+		Author: &object.Signature{
+			Name:  "Test Author",
+			Email: "test@example.com",
+			When:  time.Now(),
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to commit: %v", err)
+	}
+
+	// Extract diff
+	diff, err := extractor.ExtractDiff(repo, headHash)
+	if err != nil {
+		t.Fatalf("failed to extract diff: %v", err)
+	}
+
+	// Verify multiple files
+	if len(diff.Files) < 2 {
+		t.Errorf("expected at least 2 files, got %d", len(diff.Files))
+	}
+}
+
+func TestExtractDiff_LargeDiffTruncation(t *testing.T) {
+	logger := logging.NewNoopLogger()
+	extractor, err := NewCommitExtractor(logger)
+	if err != nil {
+		t.Fatalf("failed to create extractor: %v", err)
+	}
+
+	// Create test repository
+	tmpDir := t.TempDir()
+	repoPath := filepath.Join(tmpDir, "test-repo")
+	repo, err := git.PlainInit(repoPath, false)
+	if err != nil {
+		t.Fatalf("failed to init repo: %v", err)
+	}
+
+	worktree, err := repo.Worktree()
+	if err != nil {
+		t.Fatalf("failed to get worktree: %v", err)
+	}
+
+	// Create initial commit
+	testFile := filepath.Join(repoPath, "large.txt")
+	smallContent := "line\n"
+	if err := os.WriteFile(testFile, []byte(smallContent), 0644); err != nil {
+		t.Fatalf("failed to create file: %v", err)
+	}
+
+	if _, err := worktree.Add("large.txt"); err != nil {
+		t.Fatalf("failed to add file: %v", err)
+	}
+
+	_, err = worktree.Commit("Initial commit", &git.CommitOptions{
+		Author: &object.Signature{
+			Name:  "Test Author",
+			Email: "test@example.com",
+			When:  time.Now(),
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to commit: %v", err)
+	}
+
+	// Create a large file (>5000 lines)
+	var largeContent strings.Builder
+	for i := 0; i < MaxDiffLines+100; i++ {
+		largeContent.WriteString(fmt.Sprintf("line %d\n", i))
+	}
+
+	if err := os.WriteFile(testFile, []byte(largeContent.String()), 0644); err != nil {
+		t.Fatalf("failed to create large file: %v", err)
+	}
+
+	if _, err := worktree.Add("large.txt"); err != nil {
+		t.Fatalf("failed to add file: %v", err)
+	}
+
+	headHash, err := worktree.Commit("Add large file", &git.CommitOptions{
+		Author: &object.Signature{
+			Name:  "Test Author",
+			Email: "test@example.com",
+			When:  time.Now(),
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to commit: %v", err)
+	}
+
+	// Extract diff
+	diff, err := extractor.ExtractDiff(repo, headHash)
+	if err != nil {
+		t.Fatalf("failed to extract diff: %v", err)
+	}
+
+	// Verify truncation
+	if !diff.Truncated {
+		t.Error("expected diff to be truncated")
+	}
+
+	if diff.TotalLines <= MaxDiffLines {
+		t.Errorf("expected total lines > %d, got %d", MaxDiffLines, diff.TotalLines)
+	}
+
+	if diff.ShownLines != MaxDiffLines {
+		t.Errorf("expected shown lines to be %d, got %d", MaxDiffLines, diff.ShownLines)
+	}
+
+	// Verify truncation note is present
+	if !strings.Contains(diff.Content, "[Diff truncated:") {
+		t.Error("expected truncation note in diff content")
+	}
+
+	// Verify file statistics are still present
+	if len(diff.Files) == 0 {
+		t.Error("expected file statistics even for truncated diff")
+	}
+}
+
+func TestExtractDiff_NilRepository(t *testing.T) {
+	logger := logging.NewNoopLogger()
+	extractor, err := NewCommitExtractor(logger)
+	if err != nil {
+		t.Fatalf("failed to create extractor: %v", err)
+	}
+
+	hash := plumbing.NewHash("0000000000000000000000000000000000000000")
+	_, err = extractor.ExtractDiff(nil, hash)
+	if err == nil {
+		t.Fatal("expected error for nil repository")
+	}
+}
+
+func TestExtractDiff_InvalidCommitHash(t *testing.T) {
+	logger := logging.NewNoopLogger()
+	extractor, err := NewCommitExtractor(logger)
+	if err != nil {
+		t.Fatalf("failed to create extractor: %v", err)
+	}
+
+	// Create test repository
+	tmpDir := t.TempDir()
+	repoPath := filepath.Join(tmpDir, "test-repo")
+	repo, err := createGitRepoWithCommits(t, repoPath, 1)
+	if err != nil {
+		t.Fatalf("failed to create test repo: %v", err)
+	}
+
+	// Try to extract diff with invalid hash
+	invalidHash := plumbing.NewHash("0000000000000000000000000000000000000000")
+	_, err = extractor.ExtractDiff(repo, invalidHash)
+	if err == nil {
+		t.Fatal("expected error for invalid commit hash")
+	}
+}
+
+func TestExtractCommit_CompleteExtraction(t *testing.T) {
+	logger := logging.NewNoopLogger()
+	extractor, err := NewCommitExtractor(logger)
+	if err != nil {
+		t.Fatalf("failed to create extractor: %v", err)
+	}
+
+	// Create test repository with a commit
+	tmpDir := t.TempDir()
+	repoPath := filepath.Join(tmpDir, "test-repo")
+	repo, err := createGitRepoWithCommits(t, repoPath, 1)
+	if err != nil {
+		t.Fatalf("failed to create test repo: %v", err)
+	}
+
+	// Get HEAD commit hash
+	headRef, err := repo.Head()
+	if err != nil {
+		t.Fatalf("failed to get HEAD: %v", err)
+	}
+
+	// Extract complete commit info
+	commitInfo, err := extractor.ExtractCommit(repo, headRef.Hash())
+	if err != nil {
+		t.Fatalf("failed to extract commit: %v", err)
+	}
+
+	// Verify metadata is present
+	if commitInfo.Commit.Hash == "" {
+		t.Error("expected commit hash to be set")
+	}
+
+	// Verify diff is present
+	if commitInfo.Diff.Content == "" {
+		t.Error("expected diff content to be non-empty")
+	}
+
+	// Verify files are present
+	if len(commitInfo.Diff.Files) == 0 {
+		t.Error("expected at least one file in diff")
 	}
 }
 
