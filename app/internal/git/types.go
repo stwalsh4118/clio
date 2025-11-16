@@ -2,6 +2,13 @@ package git
 
 import "time"
 
+const (
+	// maxRetries is the maximum number of retries for transient errors
+	maxRetries = 3
+	// initialRetryDelay is the initial delay before first retry
+	initialRetryDelay = 50 * time.Millisecond
+)
+
 // Repository represents a discovered git repository
 type Repository struct {
 	Path       string // Repository root path
