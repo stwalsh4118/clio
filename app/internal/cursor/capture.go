@@ -30,7 +30,7 @@ type captureService struct {
 	config          *config.Config
 	db              *sql.DB
 	logger          logging.Logger
-	watcher         WatcherService
+	poller          PollerService
 	parser          ParserService
 	projectDetector ProjectDetector
 	sessionManager  SessionManager
@@ -88,13 +88,6 @@ func NewCaptureService(cfg *config.Config, database *sql.DB) (CaptureService, er
 
 // initializeComponents initializes all capture service components
 func (cs *captureService) initializeComponents() error {
-	// Create watcher
-	watcher, err := NewWatcher(cs.config)
-	if err != nil {
-		return fmt.Errorf("failed to create watcher: %w", err)
-	}
-	cs.watcher = watcher
-
 	// Create parser
 	parser, err := NewParser(cs.config)
 	if err != nil {
@@ -136,6 +129,13 @@ func (cs *captureService) initializeComponents() error {
 	}
 	cs.updater = updater
 
+	// Create poller (requires updater)
+	poller, err := NewPoller(cs.config, cs.updater)
+	if err != nil {
+		return fmt.Errorf("failed to create poller: %w", err)
+	}
+	cs.poller = poller
+
 	cs.logger.Info("capture service components initialized")
 	return nil
 }
@@ -149,14 +149,14 @@ func (cs *captureService) Start() error {
 		return fmt.Errorf("capture service is already started")
 	}
 
-	// Start watcher
-	if err := cs.watcher.Start(); err != nil {
-		return fmt.Errorf("failed to start watcher: %w", err)
+	// Start poller
+	if err := cs.poller.Start(); err != nil {
+		return fmt.Errorf("failed to start poller: %w", err)
 	}
 
 	// Start session manager inactivity monitor
 	if err := cs.sessionManager.StartInactivityMonitor(cs.ctx); err != nil {
-		cs.watcher.Stop()
+		cs.poller.Stop()
 		return fmt.Errorf("failed to start inactivity monitor: %w", err)
 	}
 
@@ -166,52 +166,52 @@ func (cs *captureService) Start() error {
 		cs.logger.Error("initial scan failed, continuing with normal operation", "error", err)
 	}
 
-	// Get event channel from watcher
-	events, err := cs.watcher.Watch()
+	// Get poll channel from poller
+	polls, err := cs.poller.Poll()
 	if err != nil {
 		cs.sessionManager.Stop()
-		cs.watcher.Stop()
-		return fmt.Errorf("failed to get watcher events: %w", err)
+		cs.poller.Stop()
+		return fmt.Errorf("failed to get poller channel: %w", err)
 	}
 
-	// Start event processing goroutine
+	// Start poll processing goroutine
 	cs.wg.Add(1)
-	go cs.processEvents(events)
+	go cs.processPolls(polls)
 
 	cs.started = true
 	cs.logger.Info("capture service started")
 	return nil
 }
 
-// processEvents processes file system events from the watcher
-func (cs *captureService) processEvents(events <-chan FileEvent) {
+// processPolls processes poll signals from the poller
+func (cs *captureService) processPolls(polls <-chan struct{}) {
 	defer cs.wg.Done()
 
-	cs.logger.Info("event processing started")
+	cs.logger.Info("poll processing started")
 
 	for {
 		select {
 		case <-cs.ctx.Done():
-			cs.logger.Info("event processing stopped (shutdown requested)")
+			cs.logger.Info("poll processing stopped (shutdown requested)")
 			return
-		case event, ok := <-events:
+		case _, ok := <-polls:
 			if !ok {
-				cs.logger.Info("event channel closed, stopping event processing")
+				cs.logger.Info("poll channel closed, stopping poll processing")
 				return
 			}
 
-			// Process event asynchronously to avoid blocking
+			// Process poll asynchronously to avoid blocking
 			cs.wg.Add(1)
-			go cs.handleFileEvent(event)
+			go cs.handlePoll()
 		}
 	}
 }
 
-// handleFileEvent handles a single file system event
-func (cs *captureService) handleFileEvent(event FileEvent) {
+// handlePoll handles a single poll signal
+func (cs *captureService) handlePoll() {
 	defer cs.wg.Done()
 
-	cs.logger.Debug("processing file event", "event_type", event.EventType, "path", event.Path)
+	cs.logger.Debug("processing poll")
 
 	// Detect updated composers
 	updatedComposers, err := cs.updater.DetectUpdatedComposers()
@@ -430,10 +430,10 @@ func (cs *captureService) Stop() error {
 	// Cancel context to signal shutdown
 	cs.cancel()
 
-	// Stop watcher
-	if cs.watcher != nil {
-		if err := cs.watcher.Stop(); err != nil {
-			cs.logger.Error("failed to stop watcher", "error", err)
+	// Stop poller
+	if cs.poller != nil {
+		if err := cs.poller.Stop(); err != nil {
+			cs.logger.Error("failed to stop poller", "error", err)
 		}
 	}
 

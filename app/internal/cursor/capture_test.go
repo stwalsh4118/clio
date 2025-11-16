@@ -126,7 +126,7 @@ func TestCaptureService_StartStop(t *testing.T) {
 		t.Fatalf("Failed to create cursor directory: %v", err)
 	}
 
-	// Create empty database file for watcher
+	// Create empty database file for poller
 	dbFile := filepath.Join(cursorDir, "state.vscdb")
 	if err := os.WriteFile(dbFile, []byte("test"), 0644); err != nil {
 		t.Fatalf("Failed to create test database file: %v", err)
@@ -184,7 +184,7 @@ func TestCaptureService_StartTwice(t *testing.T) {
 		t.Fatalf("Failed to create cursor directory: %v", err)
 	}
 
-	// Create empty database file for watcher
+	// Create empty database file for poller
 	dbFile := filepath.Join(cursorDir, "state.vscdb")
 	if err := os.WriteFile(dbFile, []byte("test"), 0644); err != nil {
 		t.Fatalf("Failed to create test database file: %v", err)
@@ -288,7 +288,7 @@ func TestCaptureService_StopTwice(t *testing.T) {
 		t.Fatalf("Failed to create cursor directory: %v", err)
 	}
 
-	// Create empty database file for watcher
+	// Create empty database file for poller
 	dbFile := filepath.Join(cursorDir, "state.vscdb")
 	if err := os.WriteFile(dbFile, []byte("test"), 0644); err != nil {
 		t.Fatalf("Failed to create test database file: %v", err)
