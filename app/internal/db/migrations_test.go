@@ -141,8 +141,8 @@ func TestRollbackMigrations(t *testing.T) {
 		t.Fatal("Sessions table should exist before rollback")
 	}
 
-	// Rollback 1 migration
-	newVersion, err := RollbackMigrations(db, 1)
+	// Rollback all migrations (7 migrations to get back to version 0)
+	newVersion, err := RollbackMigrations(db, 7)
 	if err != nil {
 		t.Fatalf("Failed to rollback migration: %v", err)
 	}

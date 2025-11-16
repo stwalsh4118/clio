@@ -211,7 +211,8 @@ func RollbackMigrations(db *sql.DB, count int) (int, error) {
 	}
 
 	// Rollback migrations in reverse order (newest first)
-	for i := len(migrationsToRollback) - 1; i >= 0; i-- {
+	// migrationsToRollback is already in reverse order (newest first), so iterate forwards
+	for i := 0; i < len(migrationsToRollback); i++ {
 		migration := migrationsToRollback[i]
 
 		// Execute rollback in a transaction
