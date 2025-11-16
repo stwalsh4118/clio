@@ -312,6 +312,137 @@ if err != nil {
 // Use commitInfo.Diff for diff content
 ```
 
+### CommitStorage
+
+**Status**: ✅ Implemented (Task 3-7)
+
+**Package**: `github.com/stwalsh4118/clio/internal/git`
+
+**Interface**:
+```go
+type CommitStorage interface {
+    StoreCommit(commit *Commit, diff *CommitDiff, correlation *CommitSessionCorrelation, repository *Repository, sessionID string) error
+    GetCommit(commitHash string) (*StoredCommit, error)
+    GetCommitsBySession(sessionID string) ([]*StoredCommit, error)
+    GetCommitsByRepository(repoPath string) ([]*StoredCommit, error)
+}
+```
+
+**Methods**:
+
+- **StoreCommit**: Stores a commit and all its file changes in a single transaction
+  - Input: `commit *Commit` - Commit metadata
+  - Input: `diff *CommitDiff` - Commit diff with file changes
+  - Input: `correlation *CommitSessionCorrelation` - Session correlation info
+  - Input: `repository *Repository` - Repository information
+  - Input: `sessionID string` - Session ID (may be empty)
+  - Output: `error` - Error if storage fails
+  - Behavior: Verifies session exists if sessionID provided
+  - Behavior: Stores commit and file changes in single transaction
+  - Behavior: Handles duplicate commits with ON CONFLICT
+  - Behavior: Uses commit hash as primary key
+
+- **GetCommit**: Retrieves a commit by its hash
+  - Input: `commitHash string` - Commit hash (full SHA-1)
+  - Output: `*StoredCommit` - Commit with all file changes
+  - Output: `error` - Error if retrieval fails
+  - Behavior: Returns commit with all file changes loaded
+
+- **GetCommitsBySession**: Retrieves all commits for a session
+  - Input: `sessionID string` - Session ID
+  - Output: `[]*StoredCommit` - List of commits for session
+  - Output: `error` - Error if retrieval fails
+  - Behavior: Returns commits ordered by timestamp
+
+- **GetCommitsByRepository**: Retrieves all commits for a repository
+  - Input: `repoPath string` - Repository path
+  - Output: `[]*StoredCommit` - List of commits for repository
+  - Output: `error` - Error if retrieval fails
+  - Behavior: Returns commits ordered by timestamp
+
+**Usage Pattern**:
+```go
+storage := git.NewCommitStorage(db, logger)
+
+err := storage.StoreCommit(
+    commit,
+    diff,
+    correlation,
+    repository,
+    sessionID,
+)
+if err != nil {
+    return fmt.Errorf("failed to store commit: %w", err)
+}
+
+// Retrieve commit
+storedCommit, err := storage.GetCommit(commitHash)
+if err != nil {
+    return fmt.Errorf("failed to get commit: %w", err)
+}
+
+// Retrieve commits by session
+commits, err := storage.GetCommitsBySession(sessionID)
+if err != nil {
+    return fmt.Errorf("failed to get commits: %w", err)
+}
+```
+
+**Implementation Notes**:
+- Follows same transaction pattern as `ConversationStorage`
+- Uses commit hash as primary key (like composer_id for conversations)
+- Stores parent hashes as JSON array in TEXT field
+- Handles large diffs by storing truncated version with flag
+- Foreign key relationship to `sessions` table (nullable)
+- File changes stored in separate `commit_files` table with CASCADE delete
+- All operations use transactions for atomicity
+
+## Database Schema
+
+### commits table
+
+- `id` (TEXT PRIMARY KEY) - Commit hash (full SHA-1)
+- `session_id` (TEXT, FOREIGN KEY to sessions) - Correlated session (nullable)
+- `repository_path` (TEXT) - Repository root path
+- `repository_name` (TEXT) - Repository name
+- `hash` (TEXT) - Commit hash (duplicate of id for query convenience)
+- `message` (TEXT) - Commit message
+- `author_name` (TEXT) - Author name
+- `author_email` (TEXT) - Author email
+- `timestamp` (TIMESTAMP) - Commit timestamp
+- `branch` (TEXT) - Branch name
+- `is_merge` (INTEGER) - Merge commit flag (0 or 1)
+- `parent_hashes` (TEXT) - JSON array of parent commit hashes (nullable)
+- `full_diff` (TEXT) - Full commit diff (nullable, may be truncated)
+- `diff_truncated` (INTEGER) - Whether diff was truncated (0 or 1)
+- `diff_truncated_at` (INTEGER) - Line count where truncated (nullable)
+- `correlation_type` (TEXT) - "active", "proximate", or "none" (nullable)
+- `created_at` (TIMESTAMP) - When record was created
+- `updated_at` (TIMESTAMP) - When record was updated
+
+**Indexes**:
+- `idx_commits_session_id` on `commits(session_id)`
+- `idx_commits_timestamp` on `commits(timestamp)`
+- `idx_commits_repository_path` on `commits(repository_path)`
+- `idx_commits_hash` on `commits(hash)`
+
+### commit_files table
+
+- `id` (TEXT PRIMARY KEY) - UUID for file diff
+- `commit_id` (TEXT, FOREIGN KEY to commits) - Parent commit hash
+- `file_path` (TEXT) - File path relative to repository root
+- `lines_added` (INTEGER) - Lines added
+- `lines_removed` (INTEGER) - Lines removed
+- `diff` (TEXT) - File-level diff content (nullable)
+- `created_at` (TIMESTAMP) - When record was created
+
+**Constraints**:
+- `UNIQUE (commit_id, file_path)` - One row per file per commit
+
+**Indexes**:
+- `idx_commit_files_commit_id` on `commit_files(commit_id)`
+- `idx_commit_files_file_path` on `commit_files(file_path)`
+
 ## Configuration
 
 **Git Configuration**:
@@ -369,7 +500,7 @@ All services follow graceful degradation:
 
 - Commit correlation uses session timestamps from `internal/cursor/session.go`
 - Commits are correlated with active sessions using 5-minute window
-- Commit export uses same directory structure as conversation export
+- Commits stored in database with foreign key relationship to sessions table
 
 ### With Configuration
 
@@ -379,9 +510,10 @@ All services follow graceful degradation:
 
 ### With Database
 
-- Last seen commit hashes can be persisted to database (future enhancement)
-- Commit metadata can be stored in database (future enhancement)
-- Current implementation uses in-memory state
+- Commits are persisted to database via `CommitStorage` interface
+- Commit metadata, diffs, and file changes stored in `commits` and `commit_files` tables
+- Foreign key relationship to `sessions` table for correlation
+- Last seen commit hashes stored in-memory (can be persisted in future enhancement)
 
 ### With Logging
 
@@ -415,5 +547,6 @@ All services follow graceful degradation:
 - No external git binary required
 - Supports both regular repositories and worktrees
 - Polling strategy can be enhanced to watch `.git` directories if needed
-- State persistence to database can be added in future tasks
+- Commits are persisted to database following same pattern as conversations
+- Database schema supports session correlation via foreign key
 
