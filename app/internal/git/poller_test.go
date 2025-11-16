@@ -449,15 +449,16 @@ func TestPollerService_HandlesRepositoryErrors(t *testing.T) {
 		select {
 		case result, ok := <-results:
 			if !ok {
-				break
+				goto done
 			}
 			if result.Error != nil && result.Repository.Path == invalidRepoPath {
 				errorReceived = true
 			}
 		case <-timeout:
-			break
+			goto done
 		}
 	}
+done:
 
 	if !errorReceived {
 		t.Error("expected error for invalid repository")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -105,11 +106,13 @@ func (p *poller) Start(ctx context.Context, repos []Repository) error {
 
 	// Initialize state: get current HEAD hash for each repository
 	p.logger.Debug("initializing poller state", "repository_count", len(repos))
+	var initializedCount, skippedCount int
 	for _, repo := range repos {
 		hash, err := p.getCurrentHEADHash(repo.Path)
 		if err != nil {
-			// Log error but continue - repository might be empty or invalid
-			p.logger.Warn("failed to get initial HEAD hash", "repository", repo.Path, "error", err)
+			// Log error but continue - repository might be empty, invalid, or temporarily unavailable
+			p.logger.Warn("failed to get initial HEAD hash, repository will be skipped", "repository", repo.Path, "error", err)
+			skippedCount++
 			continue
 		}
 		if hash != "" {
@@ -117,8 +120,13 @@ func (p *poller) Start(ctx context.Context, repos []Repository) error {
 			p.lastSeenHashes[repo.Path] = hash
 			p.stateMu.Unlock()
 			p.logger.Debug("initialized repository state", "repository", repo.Path, "hash", hash)
+			initializedCount++
+		} else {
+			p.logger.Debug("repository has no HEAD (empty), skipping", "repository", repo.Path)
+			skippedCount++
 		}
 	}
+	p.logger.Info("poller state initialization completed", "initialized", initializedCount, "skipped", skippedCount, "total", len(repos))
 
 	// Create ticker with configured interval
 	p.ticker = time.NewTicker(p.interval)
@@ -173,7 +181,8 @@ func (p *poller) pollRepository(repo Repository) {
 	// Get current HEAD hash
 	currentHash, err := p.getCurrentHEADHash(repo.Path)
 	if err != nil {
-		// Emit error result
+		// Emit error result with context
+		p.logger.Warn("failed to get HEAD hash during poll", "repository", repo.Path, "error", err)
 		p.emitResult(PollResult{
 			Repository: repo,
 			NewCommits: nil,
@@ -184,7 +193,7 @@ func (p *poller) pollRepository(repo Repository) {
 
 	// Handle empty repository (no HEAD)
 	if currentHash == "" {
-		p.logger.Debug("repository has no HEAD", "repository", repo.Path)
+		p.logger.Debug("repository has no HEAD, skipping poll", "repository", repo.Path)
 		return
 	}
 
@@ -205,14 +214,16 @@ func (p *poller) pollRepository(repo Repository) {
 	// Compare hashes
 	if currentHash == lastSeenHash {
 		// No new commits
+		p.logger.Debug("no new commits detected", "repository", repo.Path, "hash", currentHash)
 		return
 	}
 
 	// New commits detected - get commits between last seen and current
-	p.logger.Debug("new commits detected", "repository", repo.Path, "last_seen", lastSeenHash, "current", currentHash)
+	p.logger.Debug("new commits detected, fetching commit history", "repository", repo.Path, "last_seen", lastSeenHash, "current", currentHash)
 	commits, err := p.getCommitsBetween(repo.Path, lastSeenHash, currentHash)
 	if err != nil {
-		// Emit error result but don't update last seen hash
+		// Emit error result but don't update last seen hash (so we can retry next poll)
+		p.logger.Warn("failed to get commits between hashes", "repository", repo.Path, "last_seen", lastSeenHash, "current", currentHash, "error", err)
 		p.emitResult(PollResult{
 			Repository: repo,
 			NewCommits: nil,
@@ -228,114 +239,216 @@ func (p *poller) pollRepository(repo Repository) {
 
 	// Emit result with new commits
 	if len(commits) > 0 {
-		p.logger.Info("detected new commits", "repository", repo.Path, "count", len(commits))
+		p.logger.Info("detected new commits", "repository", repo.Path, "count", len(commits), "last_seen", lastSeenHash, "current", currentHash)
 		p.emitResult(PollResult{
 			Repository: repo,
 			NewCommits: commits,
 			Error:      nil,
 		})
+	} else {
+		p.logger.Debug("no commits found between hashes (possible reset/rebase)", "repository", repo.Path, "last_seen", lastSeenHash, "current", currentHash)
 	}
 }
 
 // getCurrentHEADHash gets the current HEAD commit hash for a repository
 func (p *poller) getCurrentHEADHash(repoPath string) (string, error) {
-	repo, err := git.PlainOpen(repoPath)
-	if err != nil {
-		return "", fmt.Errorf("failed to open repository: %w", err)
-	}
-
-	ref, err := repo.Head()
-	if err != nil {
-		if err == plumbing.ErrReferenceNotFound {
-			// Empty repository - no HEAD
-			return "", nil
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			// Exponential backoff: 50ms, 100ms, 200ms
+			delay := initialRetryDelay * time.Duration(1<<uint(attempt-1))
+			p.logger.Debug("retrying repository open", "repository", repoPath, "attempt", attempt, "delay_ms", delay.Milliseconds())
+			time.Sleep(delay)
 		}
-		return "", fmt.Errorf("failed to get HEAD: %w", err)
+
+		repo, err := git.PlainOpen(repoPath)
+		if err != nil {
+			lastErr = err
+			// Check if this is a transient error that might benefit from retry
+			if p.isTransientError(err) && attempt < maxRetries {
+				p.logger.Warn("transient error opening repository, will retry", "repository", repoPath, "attempt", attempt+1, "error", err)
+				continue
+			}
+			// Permanent error or max retries reached
+			p.logger.Error("failed to open repository", "repository", repoPath, "attempts", attempt+1, "error", err)
+			return "", fmt.Errorf("failed to open repository: %w", err)
+		}
+
+		ref, err := repo.Head()
+		if err != nil {
+			if err == plumbing.ErrReferenceNotFound {
+				// Empty repository - no HEAD (not an error)
+				p.logger.Debug("repository has no HEAD (empty repository)", "repository", repoPath)
+				return "", nil
+			}
+			// Check if this is a transient error
+			if p.isTransientError(err) && attempt < maxRetries {
+				p.logger.Warn("transient error getting HEAD, will retry", "repository", repoPath, "attempt", attempt+1, "error", err)
+				continue
+			}
+			p.logger.Error("failed to get HEAD", "repository", repoPath, "attempts", attempt+1, "error", err)
+			return "", fmt.Errorf("failed to get HEAD: %w", err)
+		}
+
+		// Success
+		if attempt > 0 {
+			p.logger.Debug("repository operation succeeded after retry", "repository", repoPath, "attempts", attempt+1)
+		}
+		return ref.Hash().String(), nil
 	}
 
-	return ref.Hash().String(), nil
+	// Should not reach here, but handle it
+	return "", fmt.Errorf("failed after %d attempts: %w", maxRetries+1, lastErr)
+}
+
+// isTransientError checks if an error is likely transient and worth retrying
+func (p *poller) isTransientError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := err.Error()
+	// Check for common transient error patterns
+	transientPatterns := []string{
+		"locked",
+		"busy",
+		"temporary",
+		"timeout",
+		"connection",
+		"network",
+	}
+	for _, pattern := range transientPatterns {
+		if strings.Contains(strings.ToLower(errStr), pattern) {
+			return true
+		}
+	}
+	return false
 }
 
 // getCommitsBetween gets all commits between fromHash (exclusive) and toHash (inclusive)
 func (p *poller) getCommitsBetween(repoPath, fromHash, toHash string) ([]Commit, error) {
-	repo, err := git.PlainOpen(repoPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open repository: %w", err)
-	}
-
-	from := plumbing.NewHash(fromHash)
-	to := plumbing.NewHash(toHash)
-
-	// Get HEAD reference for branch name
-	headRef, err := repo.Head()
-	if err != nil {
-		return nil, fmt.Errorf("failed to get HEAD: %w", err)
-	}
-	branchName := headRef.Name().Short()
-
-	// Get commit log starting from toHash
-	commitIter, err := repo.Log(&git.LogOptions{From: to})
-	if err != nil {
-		return nil, fmt.Errorf("failed to get commit log: %w", err)
-	}
-	defer commitIter.Close()
-
-	var commits []Commit
-	foundFrom := false
-
-	// Use a sentinel error to stop iteration
-	var stopIteration = errors.New("stop iteration")
-
-	err = commitIter.ForEach(func(c *object.Commit) error {
-		// Stop if we've reached the from hash
-		if c.Hash == from {
-			foundFrom = true
-			return stopIteration // Stop iteration
+	var lastErr error
+	for attempt := 0; attempt <= maxRetries; attempt++ {
+		if attempt > 0 {
+			// Exponential backoff: 50ms, 100ms, 200ms
+			delay := initialRetryDelay * time.Duration(1<<uint(attempt-1))
+			p.logger.Debug("retrying commit retrieval", "repository", repoPath, "attempt", attempt, "delay_ms", delay.Milliseconds())
+			time.Sleep(delay)
 		}
 
-		// Collect parent hashes
-		parentHashes := []string{}
-		parentCount := 0
-		parentIter := c.Parents()
-		defer parentIter.Close() // Ensure iterator is closed
-		err := parentIter.ForEach(func(parent *object.Commit) error {
-			parentHashes = append(parentHashes, parent.Hash.String())
-			parentCount++
+		repo, err := git.PlainOpen(repoPath)
+		if err != nil {
+			lastErr = err
+			if p.isTransientError(err) && attempt < maxRetries {
+				p.logger.Warn("transient error opening repository for commit retrieval, will retry", "repository", repoPath, "attempt", attempt+1, "error", err)
+				continue
+			}
+			return nil, fmt.Errorf("failed to open repository: %w", err)
+		}
+
+		from := plumbing.NewHash(fromHash)
+		to := plumbing.NewHash(toHash)
+
+		// Get HEAD reference for branch name
+		headRef, err := repo.Head()
+		if err != nil {
+			lastErr = err
+			if err == plumbing.ErrReferenceNotFound {
+				// Empty repository - return empty commits
+				return []Commit{}, nil
+			}
+			if p.isTransientError(err) && attempt < maxRetries {
+				p.logger.Warn("transient error getting HEAD, will retry", "repository", repoPath, "attempt", attempt+1, "error", err)
+				continue
+			}
+			return nil, fmt.Errorf("failed to get HEAD: %w", err)
+		}
+		branchName := headRef.Name().Short()
+
+		// Get commit log starting from toHash
+		commitIter, err := repo.Log(&git.LogOptions{From: to})
+		if err != nil {
+			lastErr = err
+			if p.isTransientError(err) && attempt < maxRetries {
+				p.logger.Warn("transient error getting commit log, will retry", "repository", repoPath, "attempt", attempt+1, "error", err)
+				continue
+			}
+			return nil, fmt.Errorf("failed to get commit log: %w", err)
+		}
+
+		var commits []Commit
+		foundFrom := false
+
+		// Use a sentinel error to stop iteration
+		var stopIteration = errors.New("stop iteration")
+
+		err = commitIter.ForEach(func(c *object.Commit) error {
+			// Stop if we've reached the from hash
+			if c.Hash == from {
+				foundFrom = true
+				return stopIteration // Stop iteration
+			}
+
+			// Collect parent hashes
+			parentHashes := []string{}
+			parentCount := 0
+			parentIter := c.Parents()
+			defer parentIter.Close() // Ensure iterator is closed
+			err := parentIter.ForEach(func(parent *object.Commit) error {
+				parentHashes = append(parentHashes, parent.Hash.String())
+				parentCount++
+				return nil
+			})
+			if err != nil {
+				// Log error but continue processing this commit
+				p.logger.Debug("failed to iterate parent commits", "commit", c.Hash.String(), "error", err)
+			}
+
+			// Convert to Commit type
+			commit := Commit{
+				Hash:      c.Hash.String(),
+				Message:   c.Message,
+				Author:    c.Author.Name,
+				Email:     c.Author.Email,
+				Timestamp: c.Author.When,
+				Branch:    branchName,
+				IsMerge:   parentCount > 1,
+				Parents:   parentHashes,
+			}
+
+			commits = append(commits, commit)
 			return nil
 		})
-		if err != nil {
-			// Log error but continue processing this commit
-			p.logger.Debug("failed to iterate parent commits", "commit", c.Hash.String(), "error", err)
+
+		// Always close the iterator
+		commitIter.Close()
+
+		// Check if error is our stop iteration sentinel
+		if err != nil && !errors.Is(err, stopIteration) {
+			lastErr = err
+			if p.isTransientError(err) && attempt < maxRetries {
+				p.logger.Warn("transient error iterating commits, will retry", "repository", repoPath, "attempt", attempt+1, "error", err)
+				continue
+			}
+			return nil, fmt.Errorf("failed to iterate commits: %w", err)
 		}
 
-		// Convert to Commit type
-		commit := Commit{
-			Hash:      c.Hash.String(),
-			Message:   c.Message,
-			Author:    c.Author.Name,
-			Email:     c.Author.Email,
-			Timestamp: c.Author.When,
-			Branch:    branchName,
-			IsMerge:   parentCount > 1,
-			Parents:   parentHashes,
+		// Success
+		if attempt > 0 {
+			p.logger.Debug("commit retrieval succeeded after retry", "repository", repoPath, "attempts", attempt+1)
 		}
 
-		commits = append(commits, commit)
-		return nil
-	})
+		// If we didn't find the from hash, that's okay - we got all commits up to HEAD
+		// This can happen if the repository was reset or rebased
+		if !foundFrom && fromHash != "" {
+			p.logger.Debug("from hash not found in commit history (possible reset/rebase)", "repository", repoPath, "from_hash", fromHash, "to_hash", toHash)
+		}
 
-	// Check if error is our stop iteration sentinel
-	if err != nil && !errors.Is(err, stopIteration) {
-		return nil, fmt.Errorf("failed to iterate commits: %w", err)
+		p.logger.Debug("retrieved commits between hashes", "repository", repoPath, "count", len(commits), "from_hash", fromHash, "to_hash", toHash)
+		return commits, nil
 	}
 
-	// If we didn't find the from hash, that's okay - we got all commits up to HEAD
-	// This can happen if the repository was reset or rebased
-	if !foundFrom && fromHash != "" {
-		p.logger.Debug("from hash not found in commit history", "repository", repoPath, "from_hash", fromHash)
-	}
-
-	return commits, nil
+	// Should not reach here, but handle it
+	return nil, fmt.Errorf("failed after %d attempts: %w", maxRetries+1, lastErr)
 }
 
 // emitResult emits a poll result to the results channel (non-blocking)
