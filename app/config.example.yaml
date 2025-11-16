@@ -25,6 +25,9 @@ cursor:
   # Linux: ~/.config/Cursor/User
   # macOS: ~/Library/Application Support/Cursor/User
   log_path: ~/.config/Cursor/User
+  # Polling interval in seconds for checking conversation updates
+  # Optional: defaults to 7 seconds if not specified (minimum: 1)
+  # poll_interval_seconds: 7
 
 # Session management configuration
 session:

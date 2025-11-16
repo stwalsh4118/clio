@@ -218,7 +218,8 @@ func CreateDefaultConfig() error {
 			DatabasePath: "~/" + configDirName + "/clio.db",
 		},
 		Cursor: CursorConfig{
-			LogPath: "", // User must configure this explicitly
+			LogPath:            "", // User must configure this explicitly
+			PollIntervalSeconds: 7, // Default polling interval: 7 seconds
 		},
 		Session: SessionConfig{
 			InactivityTimeoutMinutes: 30,

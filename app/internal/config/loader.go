@@ -121,6 +121,8 @@ func setDefaults() {
 
 	// Cursor log path - user must configure this explicitly
 	viper.SetDefault("cursor.log_path", "")
+	// Cursor polling interval - default 7 seconds
+	viper.SetDefault("cursor.poll_interval_seconds", 7)
 
 	// Session configuration
 	viper.SetDefault("session.inactivity_timeout_minutes", 30)
@@ -258,6 +260,11 @@ func applyDefaultsForEmptyValues(cfg *Config) {
 		cfg.Logging.MaxBackups = 3
 	}
 	// Console defaults to false, so we don't need to set it
+
+	// Apply cursor defaults if not set
+	if cfg.Cursor.PollIntervalSeconds == 0 {
+		cfg.Cursor.PollIntervalSeconds = 7
+	}
 }
 
 // expandConfigPaths expands all ~ paths in the configuration struct

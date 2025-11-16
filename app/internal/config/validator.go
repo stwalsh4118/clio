@@ -337,6 +337,23 @@ func ValidateCursorPath(path string) error {
 	return nil
 }
 
+// ValidateCursorConfig validates Cursor configuration including polling interval.
+func ValidateCursorConfig(cursor CursorConfig) error {
+	// Validate log path if provided
+	if cursor.LogPath != "" {
+		if err := ValidateCursorPath(cursor.LogPath); err != nil {
+			return fmt.Errorf("log path: %v", err)
+		}
+	}
+
+	// Validate polling interval
+	if cursor.PollIntervalSeconds < 1 {
+		return fmt.Errorf("poll interval must be >= 1 second, got: %d", cursor.PollIntervalSeconds)
+	}
+
+	return nil
+}
+
 // ValidateSessionConfig validates that session configuration values are valid.
 // Checks that inactivity timeout is a positive number.
 func ValidateSessionConfig(session SessionConfig) error {
@@ -371,9 +388,9 @@ func ValidateConfig(cfg *Config) error {
 		errors = append(errors, fmt.Sprintf("storage: %v", sanitizeError(err)))
 	}
 
-	// Validate cursor path
-	if err := ValidateCursorPath(cfg.Cursor.LogPath); err != nil {
-		errors = append(errors, fmt.Sprintf("cursor log path: %v", sanitizeError(err)))
+	// Validate cursor config
+	if err := ValidateCursorConfig(cfg.Cursor); err != nil {
+		errors = append(errors, fmt.Sprintf("cursor: %v", sanitizeError(err)))
 	}
 
 	// Validate session config

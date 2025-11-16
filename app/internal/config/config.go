@@ -19,7 +19,8 @@ type StorageConfig struct {
 
 // CursorConfig contains Cursor-related configuration
 type CursorConfig struct {
-	LogPath string `mapstructure:"log_path" yaml:"log_path"`
+	LogPath            string `mapstructure:"log_path" yaml:"log_path"`
+	PollIntervalSeconds int  `mapstructure:"poll_interval_seconds" yaml:"poll_interval_seconds"`
 }
 
 // SessionConfig contains session-related configuration
