@@ -170,6 +170,15 @@ if err != nil {
 }
 ```
 
+**Implementation Notes**:
+- Uses `filepath.WalkDir` for efficient recursive directory traversal
+- Skips `.git` directories during traversal to prevent scanning into git internals
+- Detects worktrees by checking if `.git` is a file (contains `gitdir: <path>`)
+- Handles symlinks by resolving paths before processing
+- Deduplicates repositories found in overlapping watched directories
+- Gracefully handles inaccessible directories (logs warning, continues scanning)
+- Pure Go implementation - no external git binary or go-git library required for discovery
+
 ### PollerService
 
 **Package**: `github.com/stwalsh4118/clio/internal/git`
