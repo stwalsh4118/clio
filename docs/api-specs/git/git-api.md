@@ -91,13 +91,18 @@ type Commit struct {
 
 ```go
 type CommitMetadata struct {
-    Hash      string    // Commit hash
-    Message   string    // Commit message
-    Author    string    // Author name
-    Email     string    // Author email
-    Timestamp time.Time // Commit timestamp
-    Branch    string    // Branch name
-    IsMerge   bool      // Whether this is a merge commit
+    Hash         string      // Commit hash (full SHA-1)
+    Message      string      // Commit message (including multi-line)
+    Timestamp    time.Time   // Commit timestamp (author time)
+    Author       AuthorInfo  // Author information
+    Branch       string      // Branch name (or "detached" if in detached HEAD state)
+    IsMerge      bool        // Whether this is a merge commit
+    ParentHashes []string    // Parent commit hashes
+}
+
+type AuthorInfo struct {
+    Name  string // Author name
+    Email string // Author email
 }
 ```
 
@@ -257,6 +262,11 @@ for result := range results {
 
 ### CommitExtractor
 
+**Status**: ✅ Partially Implemented (Task 3-4)
+- `ExtractMetadata`: ✅ Implemented
+- `ExtractDiff`: ⏳ Pending (Task 3-5)
+- `ExtractCommit`: ⏳ Pending (Task 3-5)
+
 **Package**: `github.com/stwalsh4118/clio/internal/git`
 
 **Interface**:
@@ -275,7 +285,10 @@ type CommitExtractor interface {
   - Input: `hash plumbing.Hash` - Commit hash
   - Output: `*CommitMetadata` - Commit metadata
   - Output: `error` - Error if extraction fails
-  - Behavior: Extracts hash, message, author, timestamp, branch, merge status
+  - Behavior: Extracts hash, message, author, timestamp, branch, merge status, parent hashes
+  - Behavior: Handles detached HEAD state (returns "detached" as branch name)
+  - Behavior: Detects merge commits (len(ParentHashes) > 1)
+  - Behavior: Handles initial commits (no parent hashes)
 
 - **ExtractDiff**: Extracts commit diff
   - Input: `repo *git.Repository` - go-git repository instance
@@ -295,7 +308,10 @@ type CommitExtractor interface {
 
 **Usage Pattern**:
 ```go
-extractor := git.NewCommitExtractor(logger)
+extractor, err := git.NewCommitExtractor(logger)
+if err != nil {
+    return fmt.Errorf("failed to create extractor: %w", err)
+}
 
 repo, err := git.PlainOpen(repoPath)
 if err != nil {
@@ -303,14 +319,22 @@ if err != nil {
 }
 
 hash := plumbing.NewHash("abc123...")
-commitInfo, err := extractor.ExtractCommit(repo, hash)
+metadata, err := extractor.ExtractMetadata(repo, hash)
 if err != nil {
-    return fmt.Errorf("failed to extract commit: %w", err)
+    return fmt.Errorf("failed to extract metadata: %w", err)
 }
 
-// Use commitInfo.Commit for metadata
-// Use commitInfo.Diff for diff content
+// Use metadata.Hash, metadata.Message, metadata.Author, etc.
 ```
+
+**Implementation Notes**:
+- Uses `github.com/go-git/go-git/v5` for git operations
+- Branch detection: Checks HEAD reference to determine branch name
+- Detached HEAD: Returns "detached" as branch name when HEAD is not on a branch
+- Merge commit detection: Checks if commit has more than one parent hash
+- Parent hash extraction: Iterates through commit parents to collect all parent hashes
+- Error handling: Returns descriptive errors for invalid commits, nil repository, etc.
+- Component-specific logging: Uses `component=git_extractor` tag
 
 ### CommitStorage
 
