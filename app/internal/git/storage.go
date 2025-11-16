@@ -108,13 +108,17 @@ func (cs *commitStorage) StoreCommit(commit *Commit, diff *CommitDiff, correlati
 	}
 
 	// Begin transaction
-	cs.logger.Debug("starting transaction for commit storage", "hash", commit.Hash)
+	cs.logger.Debug("starting transaction for commit storage", "hash", commit.Hash, "session_id", sessionID, "repository", repository.Path, "file_count", fileCount)
 	tx, err := cs.db.Begin()
 	if err != nil {
-		cs.logger.Error("failed to begin transaction", "hash", commit.Hash, "error", err)
+		cs.logger.Error("failed to begin transaction", "hash", commit.Hash, "session_id", sessionID, "repository", repository.Path, "error", err)
 		return fmt.Errorf("failed to begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() {
+		if err := tx.Rollback(); err != nil {
+			cs.logger.Debug("transaction rollback completed", "hash", commit.Hash)
+		}
+	}()
 
 	// Marshal parent hashes to JSON
 	var parentHashesJSON sql.NullString
@@ -222,17 +226,20 @@ func (cs *commitStorage) StoreCommit(commit *Commit, diff *CommitDiff, correlati
 	}
 
 	// Commit transaction
+	cs.logger.Debug("committing transaction", "hash", commit.Hash, "file_count", fileCount)
 	if err := tx.Commit(); err != nil {
-		cs.logger.Error("failed to commit transaction", "hash", commit.Hash, "error", err)
+		cs.logger.Error("failed to commit transaction", "hash", commit.Hash, "session_id", sessionID, "repository", repository.Path, "file_count", fileCount, "error", err)
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
 
-	cs.logger.Info("stored commit", "hash", commit.Hash, "session_id", sessionID, "file_count", fileCount)
+	cs.logger.Info("stored commit successfully", "hash", commit.Hash, "session_id", sessionID, "repository", repository.Path, "file_count", fileCount)
 	return nil
 }
 
 // storeFileDiffInTx stores a file diff within an existing transaction
 func (cs *commitStorage) storeFileDiffInTx(tx *sql.Tx, fileDiff *FileDiff, commitID string) error {
+	cs.logger.Debug("storing file diff in transaction", "commit_id", commitID, "file_path", fileDiff.Path, "lines_added", fileDiff.LinesAdded, "lines_removed", fileDiff.LinesRemoved)
+	
 	// Generate UUID for file diff ID
 	fileDiffID := uuid.New().String()
 

@@ -52,7 +52,22 @@ func NewCorrelationService(logger logging.Logger, db *sql.DB) (CorrelationServic
 
 // CorrelateCommit correlates a single commit with sessions
 func (cs *correlationService) CorrelateCommit(commit CommitMetadata, repository Repository, sessionManager cursor.SessionManager) (*CommitSessionCorrelation, error) {
+	cs.logger.Debug("correlating commit with sessions", "commit", commit.Hash, "repository", repository.Path)
+
+	// Validate commit timestamp
+	if commit.Timestamp.IsZero() {
+		cs.logger.Warn("commit has zero timestamp, cannot correlate", "commit", commit.Hash)
+		return &CommitSessionCorrelation{
+			CommitHash:      commit.Hash,
+			SessionID:       "",
+			Project:         cs.normalizeProjectName(repository.Path),
+			CorrelationType: "none",
+			TimeDiff:        0,
+		}, nil
+	}
+
 	if sessionManager == nil {
+		cs.logger.Debug("session manager is nil, returning no correlation", "commit", commit.Hash)
 		return &CommitSessionCorrelation{
 			CommitHash:      commit.Hash,
 			SessionID:       "",
@@ -64,11 +79,12 @@ func (cs *correlationService) CorrelateCommit(commit CommitMetadata, repository 
 
 	// Normalize repository path to project name
 	projectName := cs.normalizeProjectName(repository.Path)
+	cs.logger.Debug("normalized project name", "repository_path", repository.Path, "project_name", projectName)
 
 	// Get all sessions (active + ended) from database
 	sessions, err := cs.getAllSessions(sessionManager)
 	if err != nil {
-		cs.logger.Warn("failed to get sessions for correlation", "error", err, "commit", commit.Hash)
+		cs.logger.Warn("failed to get sessions for correlation, returning no correlation", "error", err, "commit", commit.Hash, "project", projectName)
 		return &CommitSessionCorrelation{
 			CommitHash:      commit.Hash,
 			SessionID:       "",
@@ -96,6 +112,7 @@ func (cs *correlationService) CorrelateCommit(commit CommitMetadata, repository 
 	// Find best matching session
 	bestMatch := cs.findBestMatchingSession(commit, matchingSessions)
 	if bestMatch == nil {
+		cs.logger.Debug("no matching session found for commit", "commit", commit.Hash, "project", projectName, "matching_sessions", len(matchingSessions))
 		return &CommitSessionCorrelation{
 			CommitHash:      commit.Hash,
 			SessionID:       "",
@@ -105,22 +122,32 @@ func (cs *correlationService) CorrelateCommit(commit CommitMetadata, repository 
 		}, nil
 	}
 
+	cs.logger.Info("commit correlated with session", "commit", commit.Hash, "session_id", bestMatch.SessionID, "correlation_type", bestMatch.CorrelationType, "time_diff_ms", bestMatch.TimeDiff.Milliseconds())
 	return bestMatch, nil
 }
 
 // CorrelateCommits correlates multiple commits with sessions
 func (cs *correlationService) CorrelateCommits(commits []CommitMetadata, repository Repository, sessionManager cursor.SessionManager) ([]CommitSessionCorrelation, error) {
+	cs.logger.Debug("correlating multiple commits", "commit_count", len(commits), "repository", repository.Path)
 	correlations := make([]CommitSessionCorrelation, 0, len(commits))
+	var failedCount int
 
 	for _, commit := range commits {
 		correlation, err := cs.CorrelateCommit(commit, repository, sessionManager)
 		if err != nil {
-			cs.logger.Warn("failed to correlate commit", "error", err, "commit", commit.Hash)
+			cs.logger.Warn("failed to correlate commit, skipping", "error", err, "commit", commit.Hash, "repository", repository.Path)
+			failedCount++
 			continue
 		}
 		if correlation != nil {
 			correlations = append(correlations, *correlation)
 		}
+	}
+
+	if failedCount > 0 {
+		cs.logger.Warn("some commits failed correlation", "total", len(commits), "successful", len(correlations), "failed", failedCount)
+	} else {
+		cs.logger.Debug("correlated all commits", "total", len(commits), "correlated", len(correlations))
 	}
 
 	return correlations, nil
@@ -153,6 +180,7 @@ func (cs *correlationService) getAllSessions(sessionManager cursor.SessionManage
 
 	rows, err := cs.db.Query(query)
 	if err != nil {
+		cs.logger.Error("failed to query sessions from database", "error", err)
 		return nil, fmt.Errorf("failed to query sessions: %w", err)
 	}
 	defer rows.Close()
@@ -174,7 +202,7 @@ func (cs *correlationService) getAllSessions(sessionManager cursor.SessionManage
 			&session.UpdatedAt,
 		)
 		if err != nil {
-			cs.logger.Debug("failed to scan session row", "error", err)
+			cs.logger.Warn("failed to scan session row, skipping", "error", err)
 			continue
 		}
 
@@ -185,19 +213,22 @@ func (cs *correlationService) getAllSessions(sessionManager cursor.SessionManage
 		// Load conversations for this session
 		conversations, err := cs.getConversationsForSession(session.ID)
 		if err != nil {
-			cs.logger.Debug("failed to load conversations for session", "session_id", session.ID, "error", err)
+			cs.logger.Warn("failed to load conversations for session, using empty slice", "session_id", session.ID, "error", err)
 			session.Conversations = []*cursor.Conversation{}
 		} else {
 			session.Conversations = conversations
+			cs.logger.Debug("loaded conversations for session", "session_id", session.ID, "conversation_count", len(conversations))
 		}
 
 		sessions = append(sessions, &session)
 	}
 
 	if err := rows.Err(); err != nil {
+		cs.logger.Error("error iterating sessions", "error", err)
 		return nil, fmt.Errorf("error iterating sessions: %w", err)
 	}
 
+	cs.logger.Debug("loaded all sessions from database", "session_count", len(sessions))
 	return sessions, nil
 }
 
@@ -216,9 +247,10 @@ func (cs *correlationService) getConversationsForSession(sessionID string) ([]*c
 	if err != nil {
 		// If table doesn't exist, return empty slice (migrations may not have run yet)
 		if strings.Contains(err.Error(), "no such table") {
-			cs.logger.Debug("conversations table does not exist yet", "session_id", sessionID)
+			cs.logger.Debug("conversations table does not exist yet, returning empty slice", "session_id", sessionID)
 			return []*cursor.Conversation{}, nil
 		}
+		cs.logger.Error("failed to query conversations from database", "session_id", sessionID, "error", err)
 		return nil, fmt.Errorf("failed to query conversations: %w", err)
 	}
 	defer rows.Close()
@@ -240,7 +272,7 @@ func (cs *correlationService) getConversationsForSession(sessionID string) ([]*c
 			&conv.CreatedAt,
 		)
 		if err != nil {
-			cs.logger.Debug("failed to scan conversation row", "error", err)
+			cs.logger.Warn("failed to scan conversation row, skipping", "session_id", sessionID, "error", err)
 			continue
 		}
 
@@ -251,19 +283,22 @@ func (cs *correlationService) getConversationsForSession(sessionID string) ([]*c
 		// Load messages for this conversation (conversation_id references conversations.id)
 		messages, err := cs.getMessagesForConversation(conversationID)
 		if err != nil {
-			cs.logger.Debug("failed to load messages for conversation", "composer_id", conv.ComposerID, "error", err)
+			cs.logger.Warn("failed to load messages for conversation, using empty slice", "composer_id", conv.ComposerID, "conversation_id", conversationID, "error", err)
 			conv.Messages = []cursor.Message{}
 		} else {
 			conv.Messages = messages
+			cs.logger.Debug("loaded messages for conversation", "composer_id", conv.ComposerID, "message_count", len(messages))
 		}
 
 		conversations = append(conversations, &conv)
 	}
 
 	if err := rows.Err(); err != nil {
+		cs.logger.Error("error iterating conversations", "session_id", sessionID, "error", err)
 		return nil, fmt.Errorf("error iterating conversations: %w", err)
 	}
 
+	cs.logger.Debug("loaded conversations for session", "session_id", sessionID, "conversation_count", len(conversations))
 	return conversations, nil
 }
 
@@ -280,6 +315,7 @@ func (cs *correlationService) getMessagesForConversation(conversationID string) 
 
 	rows, err := cs.db.Query(query, conversationID)
 	if err != nil {
+		cs.logger.Error("failed to query messages from database", "conversation_id", conversationID, "error", err)
 		return nil, fmt.Errorf("failed to query messages: %w", err)
 	}
 	defer rows.Close()
@@ -306,7 +342,7 @@ func (cs *correlationService) getMessagesForConversation(conversationID string) 
 			&msg.CreatedAt,
 		)
 		if err != nil {
-			cs.logger.Debug("failed to scan message row", "error", err)
+			cs.logger.Warn("failed to scan message row, skipping", "conversation_id", conversationID, "error", err)
 			continue
 		}
 
@@ -322,9 +358,11 @@ func (cs *correlationService) getMessagesForConversation(conversationID string) 
 	}
 
 	if err := rows.Err(); err != nil {
+		cs.logger.Error("error iterating messages", "conversation_id", conversationID, "error", err)
 		return nil, fmt.Errorf("error iterating messages: %w", err)
 	}
 
+	cs.logger.Debug("loaded messages for conversation", "conversation_id", conversationID, "message_count", len(messages))
 	return messages, nil
 }
 
@@ -345,6 +383,7 @@ func (cs *correlationService) filterSessionsByProject(sessions []*cursor.Session
 
 // findBestMatchingSession finds the best matching session for a commit
 func (cs *correlationService) findBestMatchingSession(commit CommitMetadata, sessions []*cursor.Session) *CommitSessionCorrelation {
+	cs.logger.Debug("finding best matching session", "commit", commit.Hash, "commit_time", commit.Timestamp, "session_count", len(sessions))
 	var bestMatch *CommitSessionCorrelation
 	var bestTimeDiff time.Duration = time.Duration(1<<63 - 1) // Max duration
 	bestType := "none"
