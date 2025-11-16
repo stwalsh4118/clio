@@ -165,7 +165,7 @@ func (p *parser) GetComposerIDs() ([]string, error) {
 		return nil, fmt.Errorf("error iterating composer IDs: %w", err)
 	}
 
-	p.logger.Info("retrieved composer IDs", "count", len(composerIDs))
+	p.logger.Debug("retrieved composer IDs", "count", len(composerIDs))
 	return composerIDs, nil
 }
 
