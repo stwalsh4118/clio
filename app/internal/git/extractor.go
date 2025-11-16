@@ -1,12 +1,20 @@
 package git
 
 import (
+	"errors"
 	"fmt"
+	"io"
+	"strings"
 
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/stwalsh4118/clio/internal/logging"
+)
+
+const (
+	// MaxDiffLines is the maximum number of lines to include in a diff before truncating
+	MaxDiffLines = 5000
 )
 
 // CommitExtractor defines the interface for extracting commit metadata and diffs
@@ -19,7 +27,7 @@ type CommitExtractor interface {
 // CommitInfo represents complete commit information (metadata + diff)
 type CommitInfo struct {
 	Commit CommitMetadata // Commit metadata
-	Diff   Diff          // Commit diff
+	Diff   Diff           // Commit diff
 }
 
 // Diff represents a commit diff (to be implemented in task 3-5)
@@ -190,10 +198,128 @@ func (ce *commitExtractor) findBranchContainingCommit(repo *git.Repository, comm
 	return foundBranch, found
 }
 
-// ExtractDiff extracts commit diff (to be implemented in task 3-5)
+// ExtractDiff extracts commit diff from a git commit
 func (ce *commitExtractor) ExtractDiff(repo *git.Repository, hash plumbing.Hash) (*Diff, error) {
-	// TODO: Implement in task 3-5
-	return nil, fmt.Errorf("ExtractDiff not yet implemented")
+	if repo == nil {
+		return nil, fmt.Errorf("repository cannot be nil")
+	}
+
+	// Get commit object
+	commit, err := repo.CommitObject(hash)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get commit object: %w", err)
+	}
+
+	// Generate patch
+	var patch *object.Patch
+	parentIter := commit.Parents()
+	defer parentIter.Close()
+
+	// Get first parent for merge commits, or use empty tree for initial commits
+	parent, err := parentIter.Next()
+	if err != nil {
+		// Check if this is an initial commit (no parent)
+		// ErrParentNotFound or io.EOF both indicate no parent
+		if err == object.ErrParentNotFound || errors.Is(err, io.EOF) {
+			// Initial commit - compare commit tree with empty tree
+			commitTree, err := commit.Tree()
+			if err != nil {
+				return nil, fmt.Errorf("failed to get commit tree: %w", err)
+			}
+			// Use DiffTree to compare with empty tree (nil = empty tree)
+			changes, err := object.DiffTree(nil, commitTree)
+			if err != nil {
+				return nil, fmt.Errorf("failed to diff trees for initial commit: %w", err)
+			}
+			patch, err = changes.Patch()
+			if err != nil {
+				return nil, fmt.Errorf("failed to generate patch for initial commit: %w", err)
+			}
+		} else {
+			return nil, fmt.Errorf("failed to get parent commit: %w", err)
+		}
+	} else {
+		// Normal commit or merge commit (use first parent)
+		patch, err = parent.Patch(commit)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate patch: %w", err)
+		}
+	}
+
+	// Extract full diff string
+	fullDiff := patch.String()
+
+	// Extract file-level statistics
+	files := []FileChange{}
+	for _, filePatch := range patch.FilePatches() {
+		from, to := filePatch.Files()
+
+		// Determine file path (prefer 'to' path, fallback to 'from' path)
+		var filePath string
+		if to != nil {
+			filePath = to.Path()
+		} else if from != nil {
+			filePath = from.Path()
+		} else {
+			// Skip if both are nil (shouldn't happen, but be safe)
+			ce.logger.Debug("skipping file patch with nil files", "commit", commit.Hash.String())
+			continue
+		}
+
+		// Count additions and deletions from chunks
+		// Chunk types: 0=Equal, 1=Add, 2=Delete
+		additions := 0
+		deletions := 0
+		for _, chunk := range filePatch.Chunks() {
+			chunkType := chunk.Type()
+			content := chunk.Content()
+			lines := strings.Split(content, "\n")
+
+			// Count non-empty lines (last line might be empty if content ends with newline)
+			lineCount := len(lines)
+			if lineCount > 0 && lines[lineCount-1] == "" {
+				lineCount--
+			}
+
+			if chunkType == 1 { // Add
+				additions += lineCount
+			} else if chunkType == 2 { // Delete
+				deletions += lineCount
+			}
+		}
+
+		files = append(files, FileChange{
+			Path:      filePath,
+			Additions: additions,
+			Deletions: deletions,
+		})
+	}
+
+	// Handle large diffs - truncate if necessary
+	diffLines := strings.Split(fullDiff, "\n")
+	totalLines := len(diffLines)
+	truncated := false
+	shownLines := totalLines
+	content := fullDiff
+
+	if totalLines > MaxDiffLines {
+		truncated = true
+		shownLines = MaxDiffLines
+		// Truncate diff content but keep file statistics
+		truncatedLines := diffLines[:MaxDiffLines]
+		truncationNote := fmt.Sprintf("\n\n[Diff truncated: %d lines total, showing first %d lines]", totalLines, MaxDiffLines)
+		content = strings.Join(truncatedLines, "\n") + truncationNote
+
+		ce.logger.Info("truncated large diff", "commit", commit.Hash.String(), "total_lines", totalLines, "shown_lines", shownLines)
+	}
+
+	return &Diff{
+		Content:    content,
+		Files:      files,
+		Truncated:  truncated,
+		TotalLines: totalLines,
+		ShownLines: shownLines,
+	}, nil
 }
 
 // ExtractCommit extracts complete commit information (metadata + diff)
@@ -215,4 +341,3 @@ func (ce *commitExtractor) ExtractCommit(repo *git.Repository, hash plumbing.Has
 		Diff:   *diff,
 	}, nil
 }
-
