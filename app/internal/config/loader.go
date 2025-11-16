@@ -127,6 +127,9 @@ func setDefaults() {
 	// Session configuration
 	viper.SetDefault("session.inactivity_timeout_minutes", 30)
 
+	// Git configuration
+	viper.SetDefault("git.poll_interval_seconds", 30) // Default 30 seconds
+
 	// Logging configuration
 	viper.SetDefault("logging.level", "info")
 	viper.SetDefault("logging.file_path", filepath.Join(homeDir, configDirName, "clio.log"))
@@ -264,6 +267,11 @@ func applyDefaultsForEmptyValues(cfg *Config) {
 	// Apply cursor defaults if not set
 	if cfg.Cursor.PollIntervalSeconds == 0 {
 		cfg.Cursor.PollIntervalSeconds = 7
+	}
+
+	// Apply git defaults if not set
+	if cfg.Git.PollIntervalSeconds == 0 {
+		cfg.Git.PollIntervalSeconds = 30
 	}
 }
 

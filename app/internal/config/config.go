@@ -8,6 +8,7 @@ type Config struct {
 	Cursor             CursorConfig  `mapstructure:"cursor" yaml:"cursor"`
 	Session            SessionConfig `mapstructure:"session" yaml:"session"`
 	Logging            LoggingConfig `mapstructure:"logging" yaml:"logging"`
+	Git                GitConfig     `mapstructure:"git" yaml:"git"`
 }
 
 // StorageConfig contains storage-related configuration
@@ -35,4 +36,9 @@ type LoggingConfig struct {
 	Console    bool   `mapstructure:"console" yaml:"console"`       // Also log to console (default: false for daemon, true for CLI)
 	MaxSize    int    `mapstructure:"max_size" yaml:"max_size"`     // Max log file size in MB before rotation (default: 10)
 	MaxBackups int    `mapstructure:"max_backups" yaml:"max_backups"` // Number of rotated log files to keep (default: 3)
+}
+
+// GitConfig contains git-related configuration
+type GitConfig struct {
+	PollIntervalSeconds int `mapstructure:"poll_interval_seconds" yaml:"poll_interval_seconds"` // Polling interval in seconds (default: 30, minimum: 1)
 }
