@@ -1,6 +1,6 @@
 # Git API
 
-Last Updated: 2025-11-16
+Last Updated: 2025-01-19
 
 ## Overview
 
@@ -259,6 +259,9 @@ for result := range results {
 - Initializes last seen hash on start for each repository
 - Collects commits between last seen hash and current HEAD
 - Stops iteration when reaching the last seen hash using sentinel error
+- Retry logic: Transient errors retried up to 3 times with exponential backoff (50ms, 100ms, 200ms)
+- Error handling: Repository open failures, commit access failures handled with retries
+- Logging: Comprehensive logging with repository context, retry attempts, and error details
 
 ### CommitExtractor
 
@@ -338,7 +341,10 @@ if err != nil {
 - Merge commit detection: Checks if commit has more than one parent hash
 - Parent hash extraction: Iterates through commit parents to collect all parent hashes
 - Error handling: Returns descriptive errors for invalid commits, nil repository, etc.
+- Retry logic: Commit object retrieval retried up to 3 times for transient errors
 - Component-specific logging: Uses `component=git_extractor` tag
+- Logging: Detailed logging for extraction operations, diff generation, file processing
+- Graceful degradation: Branch detection failures don't stop extraction, uses "unknown" fallback
 
 ### CommitStorage
 
@@ -424,6 +430,9 @@ if err != nil {
 - Foreign key relationship to `sessions` table (nullable)
 - File changes stored in separate `commit_files` table with CASCADE delete
 - All operations use transactions for atomicity
+- Error handling: Comprehensive error handling with transaction rollback on failure
+- Logging: Detailed logging for transaction operations, file diff storage, commit retrieval
+- Graceful degradation: Individual row scan failures log warnings and continue processing
 
 ## Database Schema
 
@@ -496,31 +505,81 @@ git:
 ### Common Errors
 
 **Repository Not Found**:
-- Error: `git.ErrRepositoryNotExists`
-- Handling: Log warning, skip repository, continue with others
+- Error: Repository path doesn't exist or is inaccessible
+- Handling: Log warning with repository path, skip repository, continue with others
+- Log Level: Warn
 
-**Invalid Repository**:
-- Error: Repository open fails
-- Handling: Log error, skip repository, continue with others
+**Invalid/Corrupted Repository**:
+- Error: Repository validation fails (git.PlainOpen fails)
+- Handling: Log warning with repository path and error, skip repository, continue with others
+- Log Level: Warn
+- Validation: Repository is validated during discovery using `git.PlainOpen()`
+
+**Permission Errors**:
+- Error: `os.IsPermission(err)` - read access denied
+- Handling: Log warning with path and error, skip directory/repository, continue with others
+- Log Level: Warn
 
 **HEAD Not Found**:
 - Error: `plumbing.ErrReferenceNotFound` (empty repository)
-- Handling: Log info, skip polling, continue with others
+- Handling: Log debug, skip polling for this repository, continue with others
+- Log Level: Debug (not an error condition)
 
 **Commit Extraction Failure**:
-- Error: Commit not found or invalid
-- Handling: Log error, skip commit, continue with others
+- Error: Commit not found, invalid hash, or repository access error
+- Handling: Log error with commit hash and error details, skip commit, continue with others
+- Log Level: Error
+- Retry Logic: Transient errors are retried up to 3 times with exponential backoff
+
+**Diff Generation Failure**:
+- Error: Patch generation fails, tree access fails
+- Handling: Log error with commit hash and error details, return error
+- Log Level: Error
 
 **Large Diff Truncation**:
 - Not an error, but logged as info
 - Diff truncated with note indicating total lines
+- Log Level: Info
+
+**Database Errors**:
+- Error: Query failures, transaction failures, connection errors
+- Handling: Log error with context (session ID, commit hash, etc.), return error
+- Log Level: Error
+- Graceful Degradation: Individual row scan failures log warnings and continue
+
+**Transient Errors**:
+- Error: File locks, temporary I/O errors, database locks
+- Handling: Retry with exponential backoff (50ms, 100ms, 200ms), maximum 3 retries
+- Log Level: Warn for retry attempts, Error if all retries fail
 
 ### Error Handling Pattern
 
 All services follow graceful degradation:
 - Individual repository failures don't stop entire system
-- Errors are logged with context (repository path, commit hash, etc.)
+- Errors are logged with context (repository path, commit hash, session ID, etc.)
 - System continues operating despite individual failures
+- Retry logic for transient errors (file locks, temporary I/O)
+- Maximum retry attempts: 3
+- Exponential backoff: 50ms → 100ms → 200ms
+
+### Retry Logic
+
+**Implementation**:
+- Retry logic implemented in `poller.go` and `extractor.go`
+- Constants defined in `types.go`: `maxRetries = 3`, `initialRetryDelay = 50ms`
+- Transient error detection via `isTransientError()` method
+- Only retries errors matching transient patterns: "locked", "busy", "temporary", "timeout", "connection", "network"
+
+**Where Applied**:
+- Repository open operations (`getCurrentHEADHash`, `getCommitsBetween`)
+- Commit object retrieval (`ExtractMetadata`, `ExtractDiff`)
+- Commit log iteration
+- HEAD reference access
+
+**Not Applied To**:
+- Permanent failures (missing repositories, invalid commit hashes)
+- Validation errors (nil repository, empty commit hash)
+- User errors (invalid configuration)
 
 ## Integration Points
 
@@ -545,9 +604,46 @@ All services follow graceful degradation:
 
 ### With Logging
 
-- Uses `internal/logging` package for structured logging
-- Component tag: `component=git_<service_name>`
-- Log levels: Error, Warn, Info, Debug
+- Uses `internal/logging` package for structured logging (zerolog-based)
+- Component tags: `component=git_discovery`, `component=git_poller`, `component=git_extractor`, `component=git_correlation`, `component=commit_storage`
+- Log levels: Error (failures), Warn (recoverable issues), Info (important events), Debug (detailed operations)
+
+**Logging Patterns** (following PBI 2 Cursor capture patterns):
+
+**Discovery Service** (`component=git_discovery`):
+- Debug: Directory scanning progress, repository detection details, duplicate detection
+- Info: Repository discovered (with path, name, type), discovery completed (with counts)
+- Warn: Skipped directories (with reason), invalid/corrupted repositories, permission errors
+- Error: Critical discovery failures
+
+**Poller Service** (`component=git_poller`):
+- Debug: Polling operations, commit detection, state updates, retry attempts
+- Info: New commits detected (with count), polling started/stopped, state initialization completed
+- Warn: Repository polling errors (with context), retry attempts, channel full
+- Error: Critical polling failures, repository open failures after retries
+
+**Extractor Service** (`component=git_extractor`):
+- Debug: Commit extraction details, diff generation, file processing, retry attempts
+- Info: Commit extracted (with hash), diff truncated (with line counts)
+- Warn: Extraction failures (with commit hash), skipped files, branch detection failures, retry attempts
+- Error: Critical extraction failures, commit object retrieval failures after retries
+
+**Correlation Service** (`component=git_correlation`):
+- Debug: Correlation matching details, project matching, timestamp comparisons, database queries
+- Info: Commit correlated (with session ID and type), correlation completed
+- Warn: Correlation failures (with context), missing sessions, database query failures
+- Error: Critical correlation failures, database errors
+
+**Storage Service** (`component=commit_storage`):
+- Debug: Transaction operations, file diff storage, commit retrieval details
+- Info: Commit stored (with hash, session ID, file count), commits retrieved (with counts)
+- Warn: Storage warnings (skipped rows, parse failures)
+- Error: Storage errors (transaction failures, database errors)
+
+**Structured Fields**:
+- Consistent field names: `repository`, `commit`, `hash`, `session_id`, `file_count`, `error`, `attempt`, `delay_ms`
+- Context always included: repository path, commit hash, session ID, file paths
+- Operation counts and statistics logged for monitoring
 
 ## Performance Considerations
 
