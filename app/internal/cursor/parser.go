@@ -323,35 +323,86 @@ func (p *parser) queryMessageBubbles(composerID string, headers []struct {
 			return nil, fmt.Errorf("failed to query bubble data: %w", err)
 		}
 
-		// Parse JSON
-		var bubbleData bubbleDataJSON
-		if err := json.Unmarshal(valueBlob, &bubbleData); err != nil {
+		// Parse JSON into a map first to capture all fields
+		var rawBubbleData map[string]interface{}
+		if err := json.Unmarshal(valueBlob, &rawBubbleData); err != nil {
 			// Corrupted JSON - skip this message but continue
 			p.logger.Warn("corrupted JSON in message bubble, skipping", "composer_id", composerID, "bubble_id", header.BubbleID, "error", err)
 			corruptedCount++
 			continue
 		}
 
+		// Extract known fields
+		bubbleID, _ := rawBubbleData["bubbleId"].(string)
+		if bubbleID == "" {
+			bubbleID = header.BubbleID
+		}
+
+		msgType := 0
+		if typeVal, ok := rawBubbleData["type"].(float64); ok {
+			msgType = int(typeVal)
+		} else if header.Type != 0 {
+			msgType = header.Type
+		}
+
+		text, _ := rawBubbleData["text"].(string)
+		createdAtStr, _ := rawBubbleData["createdAt"].(string)
+
 		// Parse timestamp (ISO 8601 format)
-		createdAt, err := parseISO8601Timestamp(bubbleData.CreatedAt)
+		createdAt, err := parseISO8601Timestamp(createdAtStr)
 		if err != nil {
 			// Invalid timestamp - use zero time but continue
-			p.logger.Warn("invalid timestamp in message bubble, using zero time", "composer_id", composerID, "bubble_id", header.BubbleID, "timestamp", bubbleData.CreatedAt, "error", err)
+			p.logger.Warn("invalid timestamp in message bubble, using zero time", "composer_id", composerID, "bubble_id", bubbleID, "timestamp", createdAtStr, "error", err)
 			createdAt = time.Time{}
 			invalidTimestampCount++
 		}
 
 		// Identify role from type
-		role := identifyRole(bubbleData.Type)
+		role := identifyRole(msgType)
+
+		// Extract thinking text (for agent messages)
+		thinkingText := ""
+		if thinkingVal, ok := rawBubbleData["thinking"].(map[string]interface{}); ok {
+			if thinkingTextVal, ok := thinkingVal["text"].(string); ok {
+				thinkingText = thinkingTextVal
+			}
+		}
+
+		// Extract code blocks (from codeBlocks or suggestedCodeBlocks)
+		codeBlocks := extractCodeBlocks(rawBubbleData)
+
+		// Extract tool calls (from toolFormerData)
+		toolCalls := extractToolCalls(rawBubbleData)
+
+		// Determine content source
+		contentSource := determineContentSource(text, thinkingText, codeBlocks, toolCalls)
+
+		// Build metadata map with all fields except the ones we're storing directly
+		metadata := make(map[string]interface{})
+		for key, value := range rawBubbleData {
+			// Skip fields we're storing directly in the Message struct
+			if key != "bubbleId" && key != "type" && key != "text" && key != "createdAt" &&
+				key != "thinking" && key != "codeBlocks" && key != "suggestedCodeBlocks" &&
+				key != "toolFormerData" && key != "toolResults" {
+				metadata[key] = value
+			}
+		}
 
 		// Build message
 		message := Message{
-			BubbleID:  bubbleData.BubbleID,
-			Type:      bubbleData.Type,
-			Role:      role,
-			Text:      bubbleData.Text,
-			CreatedAt: createdAt,
-			Metadata:  make(map[string]interface{}),
+			BubbleID:      bubbleID,
+			Type:          msgType,
+			Role:          role,
+			Text:          text,
+			ThinkingText:  thinkingText,
+			CodeBlocks:    codeBlocks,
+			ToolCalls:     toolCalls,
+			ContentSource: contentSource,
+			HasCode:       len(codeBlocks) > 0,
+			HasThinking:   thinkingText != "",
+			HasToolCalls:  len(toolCalls) > 0,
+			CreatedAt:     createdAt,
+			Metadata:      metadata,
 		}
 
 		messages = append(messages, message)
@@ -401,4 +452,141 @@ func identifyRole(msgType int) string {
 	default:
 		return "unknown"
 	}
+}
+
+// extractCodeBlocks extracts code blocks from raw bubble data
+// Checks both codeBlocks and suggestedCodeBlocks fields
+func extractCodeBlocks(data map[string]interface{}) []CodeBlock {
+	var codeBlocks []CodeBlock
+
+	// Try codeBlocks first
+	if codeBlocksVal, ok := data["codeBlocks"].([]interface{}); ok {
+		for _, cb := range codeBlocksVal {
+			if cbMap, ok := cb.(map[string]interface{}); ok {
+				codeBlock := CodeBlock{}
+				if content, ok := cbMap["content"].(string); ok {
+					codeBlock.Content = content
+				}
+				if langID, ok := cbMap["languageId"].(string); ok {
+					codeBlock.LanguageID = langID
+				}
+				if idx, ok := cbMap["codeBlockIdx"].(float64); ok {
+					codeBlock.CodeBlockIdx = int(idx)
+				}
+				if codeBlock.Content != "" {
+					codeBlocks = append(codeBlocks, codeBlock)
+				}
+			}
+		}
+	}
+
+	// Also check suggestedCodeBlocks
+	if suggestedVal, ok := data["suggestedCodeBlocks"].([]interface{}); ok {
+		for _, cb := range suggestedVal {
+			if cbMap, ok := cb.(map[string]interface{}); ok {
+				codeBlock := CodeBlock{}
+				if content, ok := cbMap["content"].(string); ok {
+					codeBlock.Content = content
+				}
+				if langID, ok := cbMap["languageId"].(string); ok {
+					codeBlock.LanguageID = langID
+				}
+				if idx, ok := cbMap["codeBlockIdx"].(float64); ok {
+					codeBlock.CodeBlockIdx = int(idx)
+				}
+				if codeBlock.Content != "" {
+					codeBlocks = append(codeBlocks, codeBlock)
+				}
+			}
+		}
+	}
+
+	return codeBlocks
+}
+
+// extractToolCalls extracts tool calls from raw bubble data
+// Checks toolFormerData field
+func extractToolCalls(data map[string]interface{}) []ToolCall {
+	var toolCalls []ToolCall
+
+	if toolDataVal, ok := data["toolFormerData"].(map[string]interface{}); ok {
+		toolCall := ToolCall{}
+		if name, ok := toolDataVal["name"].(string); ok {
+			toolCall.Name = name
+		}
+		if status, ok := toolDataVal["status"].(string); ok {
+			toolCall.Status = status
+		}
+		if idx, ok := toolDataVal["toolIndex"].(float64); ok {
+			toolCall.ToolIndex = int(idx)
+		}
+		if toolCall.Name != "" {
+			toolCalls = append(toolCalls, toolCall)
+		}
+	}
+
+	// Also check toolResults array (multiple tool calls)
+	if toolResultsVal, ok := data["toolResults"].([]interface{}); ok {
+		for _, tr := range toolResultsVal {
+			if trMap, ok := tr.(map[string]interface{}); ok {
+				toolCall := ToolCall{}
+				if name, ok := trMap["name"].(string); ok {
+					toolCall.Name = name
+				} else if name, ok := trMap["toolName"].(string); ok {
+					toolCall.Name = name
+				}
+				if status, ok := trMap["status"].(string); ok {
+					toolCall.Status = status
+				}
+				if idx, ok := trMap["toolIndex"].(float64); ok {
+					toolCall.ToolIndex = int(idx)
+				}
+				if toolCall.Name != "" {
+					toolCalls = append(toolCalls, toolCall)
+				}
+			}
+		}
+	}
+
+	return toolCalls
+}
+
+// determineContentSource determines where the message content came from
+// Returns: "text" | "thinking" | "code" | "tool" | "mixed"
+func determineContentSource(text, thinkingText string, codeBlocks []CodeBlock, toolCalls []ToolCall) string {
+	hasText := text != ""
+	hasThinking := thinkingText != ""
+	hasCode := len(codeBlocks) > 0
+	hasTools := len(toolCalls) > 0
+
+	count := 0
+	if hasText {
+		count++
+	}
+	if hasThinking {
+		count++
+	}
+	if hasCode {
+		count++
+	}
+	if hasTools {
+		count++
+	}
+
+	if count > 1 {
+		return "mixed"
+	}
+	if hasText {
+		return "text"
+	}
+	if hasThinking {
+		return "thinking"
+	}
+	if hasCode {
+		return "code"
+	}
+	if hasTools {
+		return "tool"
+	}
+	return "text" // Default fallback
 }
