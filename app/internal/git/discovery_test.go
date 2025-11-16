@@ -258,6 +258,110 @@ func TestDiscoveryService_FindGitRepositories(t *testing.T) {
 			t.Error("expected IsWorktree to be false")
 		}
 	})
+
+	t.Run("handle corrupted repository gracefully", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		
+		// Create a directory with .git but invalid structure (corrupted)
+		corruptedRepo := filepath.Join(tmpDir, "corrupted-repo")
+		if err := os.MkdirAll(corruptedRepo, 0755); err != nil {
+			t.Fatalf("failed to create directory: %v", err)
+		}
+		
+		// Create .git directory but make it invalid (empty or missing critical files)
+		gitDir := filepath.Join(corruptedRepo, ".git")
+		if err := os.MkdirAll(gitDir, 0755); err != nil {
+			t.Fatalf("failed to create .git directory: %v", err)
+		}
+		// Don't create HEAD or other required files - this makes it invalid
+
+		// Create a valid repo in the same directory to ensure discovery continues
+		validRepo := filepath.Join(tmpDir, "valid-repo")
+		createTestGitRepo(t, validRepo, false)
+
+		repos, err := ds.FindGitRepositories(tmpDir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Should only find the valid repository, corrupted one should be skipped
+		if len(repos) != 1 {
+			t.Fatalf("expected 1 repository (valid one), got %d", len(repos))
+		}
+
+		if repos[0].Path != validRepo {
+			t.Errorf("expected valid repository, got %s", repos[0].Path)
+		}
+	})
+
+	t.Run("handle invalid worktree .git file gracefully", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		
+		// Create a directory with invalid .git file
+		invalidWorktree := filepath.Join(tmpDir, "invalid-worktree")
+		if err := os.MkdirAll(invalidWorktree, 0755); err != nil {
+			t.Fatalf("failed to create directory: %v", err)
+		}
+		
+		// Create .git file with invalid format
+		gitFile := filepath.Join(invalidWorktree, ".git")
+		if err := os.WriteFile(gitFile, []byte("invalid content\n"), 0644); err != nil {
+			t.Fatalf("failed to create .git file: %v", err)
+		}
+
+		// Create a valid repo to ensure discovery continues
+		validRepo := filepath.Join(tmpDir, "valid-repo")
+		createTestGitRepo(t, validRepo, false)
+
+		repos, err := ds.FindGitRepositories(tmpDir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Should only find the valid repository
+		if len(repos) != 1 {
+			t.Fatalf("expected 1 repository (valid one), got %d", len(repos))
+		}
+
+		if repos[0].Path != validRepo {
+			t.Errorf("expected valid repository, got %s", repos[0].Path)
+		}
+	})
+
+	t.Run("handle missing repository directory gracefully", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		
+		// Create a valid repo
+		validRepo := filepath.Join(tmpDir, "valid-repo")
+		createTestGitRepo(t, validRepo, false)
+
+		// Create a worktree with missing git directory
+		missingWorktree := filepath.Join(tmpDir, "missing-worktree")
+		if err := os.MkdirAll(missingWorktree, 0755); err != nil {
+			t.Fatalf("failed to create directory: %v", err)
+		}
+		
+		// Create .git file pointing to non-existent directory
+		gitFile := filepath.Join(missingWorktree, ".git")
+		gitFileContent := "gitdir: /nonexistent/path/to/git\n"
+		if err := os.WriteFile(gitFile, []byte(gitFileContent), 0644); err != nil {
+			t.Fatalf("failed to create .git file: %v", err)
+		}
+
+		repos, err := ds.FindGitRepositories(tmpDir)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+
+		// Should only find the valid repository
+		if len(repos) != 1 {
+			t.Fatalf("expected 1 repository (valid one), got %d", len(repos))
+		}
+
+		if repos[0].Path != validRepo {
+			t.Errorf("expected valid repository, got %s", repos[0].Path)
+		}
+	})
 }
 
 // Helper functions
