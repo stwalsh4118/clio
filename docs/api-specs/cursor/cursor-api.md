@@ -108,8 +108,9 @@ Returns workspace/file context for that message.
 ## Update Detection
 
 - Database uses `UNIQUE ON CONFLICT REPLACE` - updates overwrite entries
-- Monitor `state.vscdb` file modification time
+- Polling mechanism checks for updates at configurable intervals (default: 7 seconds)
 - Compare `fullConversationHeadersOnly` array length to detect new messages
+- Polling prevents excessive database reads that cause Cursor lockups
 
 ## Configuration
 
@@ -121,12 +122,16 @@ Returns workspace/file context for that message.
 - Path is a directory
 - Directory is readable
 
+**Polling Interval**: Configured via `config.Cursor.PollIntervalSeconds` (default: 7 seconds, minimum: 1 second)
+- Validated using `config.ValidateCursorConfig()` which ensures interval >= 1 second
+
 **Example Configuration**:
 ```yaml
 cursor:
   log_path: ~/.config/Cursor/User  # Linux (contains globalStorage/ and workspaceStorage/)
   # or
   log_path: ~/Library/Application Support/Cursor/User  # macOS (contains globalStorage/ and workspaceStorage/)
+  poll_interval_seconds: 7  # Polling interval in seconds (default: 7, minimum: 1)
 ```
 
 **Directory Structure**:
@@ -135,75 +140,63 @@ cursor:
   - `workspace.json` - Maps workspace hash to project path
   - `state.vscdb` - Workspace composer ID references
 
-## File System Watcher
+## Poller Service
 
 **Package**: `github.com/stwalsh4118/clio/internal/cursor`
 
-### WatcherService Interface
+### PollerService Interface
 
 ```go
-type WatcherService interface {
+type PollerService interface {
     Start() error
     Stop() error
-    Watch() (<-chan FileEvent, error)
-}
-```
-
-### FileEvent Type
-
-```go
-type FileEvent struct {
-    Path      string    // Full path to the file
-    EventType string    // Type of event ("WRITE", "CREATE")
-    Timestamp time.Time // When the event occurred
+    Poll() (<-chan struct{}, error) // Returns channel that receives on each poll
 }
 ```
 
 ### Usage Pattern
 
-1. Create watcher: `watcher, err := cursor.NewWatcher(cfg)`
-2. Start watching: `watcher.Start()`
-3. Get events channel: `events, err := watcher.Watch()`
-4. Process events: `for event := range events { ... }`
-5. Stop watching: `watcher.Stop()`
+1. Create poller: `poller, err := cursor.NewPoller(cfg, updater)`
+2. Start polling: `poller.Start()`
+3. Get poll channel: `polls, err := poller.Poll()`
+4. Process polls: `for range polls { ... }`
+5. Stop polling: `poller.Stop()`
 
-### Path Construction
+### Polling Mechanism
 
-The watcher monitors: `{cursor.log_path}/globalStorage/state.vscdb`
+- Polls for conversation updates at configurable intervals (default: 7 seconds)
+- Calls `DetectUpdatedComposers()` on each poll to check for updates
+- Sends signal to poll channel when updates are detected
+- Prevents excessive database reads that cause Cursor lockups
 
-- If file exists: Watches the file directly
-- If file doesn't exist: Watches parent directory (`globalStorage/`) and switches to file watch when created
+### Configuration
 
-### Event Filtering
+**Polling Interval**: Configured via `config.Cursor.PollIntervalSeconds` (default: 7 seconds, minimum: 1 second)
 
-- Only processes `WRITE` and `CREATE` events for `state.vscdb`
-- Filters out events for other files
-- Ignores `CHMOD`, `REMOVE`, `RENAME` events
+- Default: 7 seconds (sufficient for non-real-time updates)
+- Minimum: 1 second (prevents excessive polling)
+- Validation: Interval must be >= 1 second
 
 ### Error Handling
 
-- **Watcher creation failures**: Returns error, does not start watcher
-- **Watch path determination failures**: Returns error with context (file path, parent directory)
-- **File system errors**: Logs warning, continues monitoring, attempts recovery
-- **Watch recovery**: Automatically attempts to re-establish watch on errors
-- **Channel full**: Logs warning, drops event (non-blocking)
-- **Graceful shutdown**: Closes watcher cleanly, logs shutdown events
+- **Poller creation failures**: Returns error, does not start poller
+- **Poll failures**: Logs error, continues polling (graceful degradation)
+- **Channel full**: Logs warning, drops poll signal (non-blocking)
+- **Graceful shutdown**: Stops ticker, waits for goroutine, closes channels cleanly
 
 ### Logging
 
-**Component Tag**: `component=watcher`
+**Component Tag**: `component=poller`
 
 **Log Levels**:
-- **Error**: Failed to create watcher, failed to add watch, failed to close watcher, recovery failures
-- **Warn**: File watcher errors, channel full events, failed watch recovery attempts
-- **Info**: Watcher started, watcher stopped, watch path determined, switched to file watch, watch recovered
-- **Debug**: Event received, event filtered, path normalization, watch path determination details
+- **Error**: Failed to create poller, failed to detect updated composers during poll
+- **Warn**: Poll channel full, polling interval too small (using minimum)
+- **Info**: Poller started, poller stopped, poll detected updated composers, periodic polling activity (every 10th poll)
+- **Debug**: Polling loop started, performing poll, poll signal sent, no updates detected
 
 **Structured Fields**:
-- `watch_path`: Path being watched
-- `db_path`: Database file path
-- `event_type`: Type of file system event
-- `file_path`: Path of file in event
+- `interval_seconds`: Polling interval in seconds
+- `count`: Number of updated composers detected
 - `error`: Error details
 
 ## Conversation Parser
@@ -700,10 +693,12 @@ type ConversationUpdater interface {
 ### Update Detection Workflow
 
 **DetectUpdatedComposers()**:
+- Opens a single Cursor database connection and reuses it for all composer checks
 - Queries Cursor database for all composer IDs using `ParserService.GetComposerIDs()`
 - For each composer ID, queries `composerData:{composerID}` to get `fullConversationHeadersOnly` array length
 - Compares current message count with processed count from `processed_conversations` table
 - Returns composer IDs where `currentCount > processedCount`
+- Closes connection after all checks complete (efficient connection reuse)
 
 ### Incremental Message Parsing
 
@@ -742,7 +737,7 @@ CREATE TABLE processed_conversations (
 ### Integration
 
 - **Dependencies**: Requires `ParserService`, `ConversationStorage`, `SessionManager`, and database connection
-- **File Watcher Integration**: Called when `state.vscdb` file modification is detected (task 2-10)
+- **Poller Integration**: Called periodically by `PollerService` at configured intervals (default: 7 seconds)
 - **Session Updates**: Automatically updates session `last_activity` when conversations are updated
 - **Atomic Operations**: Uses database transactions for updating messages and processed state together
 

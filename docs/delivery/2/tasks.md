@@ -19,4 +19,5 @@ This document lists all tasks associated with PBI 2.
 | 2-9 | [Add error handling and logging](./2-9.md) | Done | Comprehensive error handling and logging throughout the capture system |
 | 2-10 | [Integrate Cursor capture components into daemon](./2-10.md) | Done | Wire together watcher, parser, project detector, session tracker, and storage into daemon |
 | 2-11 | [E2E CoS Test](./2-11.md) | Proposed | End-to-end test verifying all 11 acceptance criteria from PBI 2 |
+| 2-12 | [Replace filesystem watcher with polling mechanism](./2-12.md) | Done | Replace filesystem watcher with configurable polling mechanism to prevent Cursor lockups caused by excessive database reads |
 
