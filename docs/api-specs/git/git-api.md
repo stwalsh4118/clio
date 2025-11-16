@@ -262,10 +262,10 @@ for result := range results {
 
 ### CommitExtractor
 
-**Status**: ✅ Partially Implemented (Task 3-4)
+**Status**: ✅ Implemented (Task 3-4, 3-5)
 - `ExtractMetadata`: ✅ Implemented
-- `ExtractDiff`: ⏳ Pending (Task 3-5)
-- `ExtractCommit`: ⏳ Pending (Task 3-5)
+- `ExtractDiff`: ✅ Implemented
+- `ExtractCommit`: ✅ Implemented
 
 **Package**: `github.com/stwalsh4118/clio/internal/git`
 
@@ -295,8 +295,12 @@ type CommitExtractor interface {
   - Input: `hash plumbing.Hash` - Commit hash
   - Output: `*Diff` - Commit diff with file statistics
   - Output: `error` - Error if extraction fails
-  - Behavior: Truncates diffs >5000 lines with note
+  - Behavior: Truncates diffs >5000 lines with note (preserves file statistics)
   - Behavior: Includes file-level statistics (additions/deletions)
+  - Behavior: Handles initial commits (no parent) by comparing with empty tree
+  - Behavior: Uses first parent for merge commits (standard git behavior)
+  - Behavior: Counts additions/deletions from patch chunks
+  - Implementation: Uses `object.DiffTree` for initial commits, `parent.Patch(commit)` for normal commits
 
 - **ExtractCommit**: Extracts complete commit information
   - Input: `repo *git.Repository` - go-git repository instance
